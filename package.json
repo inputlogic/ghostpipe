@@ -7,12 +7,20 @@
     "ghostpipe": "./bin/ghostpipe.js"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "serve": "node webdemo/server.js"
   },
-  "keywords": ["cli"],
+  "keywords": [
+    "cli"
+  ],
   "author": "",
   "license": "MIT",
   "engines": {
     "node": ">=14.0.0"
+  },
+  "dependencies": {
+    "@roamhq/wrtc": "^0.9.0",
+    "y-webrtc": "^10.3.0",
+    "yjs": "^13.6.27"
   }
 }
