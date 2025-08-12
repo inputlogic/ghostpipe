@@ -8,6 +8,7 @@ const { WebrtcProvider } = require('y-webrtc')
 const wrtc = require('@roamhq/wrtc')
 
 const args = process.argv.slice(2)
+let VERBOSE = false
 
 const DEFAULT_HOST = 'https://ghostpipe.dev'
 const DEFAULT_SIGNALING_SERVER = 'wss://signaling.ghostpipe.dev'
@@ -39,7 +40,7 @@ const loadConfig = () => {
   return {}
 }
 
-const getAllFiles = (dirPath, basePath = '', fileList = []) => {
+const getAllFiles = (dirPath, basePath = '', fileList = [], allowedFiles = null) => {
   const files = fs.readdirSync(dirPath)
   
   files.forEach(file => {
@@ -58,14 +59,19 @@ const getAllFiles = (dirPath, basePath = '', fileList = []) => {
     const stat = fs.statSync(filePath)
     
     if (stat.isDirectory()) {
-      getAllFiles(filePath, relativePath, fileList)
+      getAllFiles(filePath, relativePath, fileList, allowedFiles)
     } else if (stat.isFile()) {
+      // If allowedFiles is specified, only include those files
+      if (allowedFiles && !allowedFiles.includes(relativePath)) {
+        return
+      }
+      
       try {
         const content = fs.readFileSync(filePath, 'utf8')
         fileList.push({ path: relativePath, content })
       } catch (err) {
         // Skip files that can't be read as text
-        console.warn(`Skipping binary or unreadable file: ${relativePath}`)
+        if (VERBOSE) console.warn(`Skipping binary or unreadable file: ${relativePath}`)
       }
     }
   })
@@ -78,7 +84,8 @@ const parseArgs = (args) => {
     host: null,
     command: null,
     showHelp: false,
-    showVersion: false
+    showVersion: false,
+    verbose: false
   }
   
   for (let i = 0; i < args.length; i++) {
@@ -95,6 +102,8 @@ const parseArgs = (args) => {
       }
     } else if (arg === '-v' || arg === '--version') {
       parsed.showVersion = true
+    } else if (arg === '--verbose') {
+      parsed.verbose = true
     } else if (!arg.startsWith('-')) {
       parsed.command = arg
     }
@@ -103,7 +112,13 @@ const parseArgs = (args) => {
   return parsed
 }
 
-const createSession = (host, signalingServer) => {
+const createSession = (hostConfig, signalingServer) => {
+  // If hostConfig is a string, treat it as a simple host URL
+  const isSimpleHost = typeof hostConfig === 'string'
+  const host = isSimpleHost ? hostConfig : hostConfig.host
+  const name = isSimpleHost ? 'Default' : hostConfig.name
+  const allowedFiles = isSimpleHost ? null : hostConfig.files
+  
   // Generate a random pipe ID for this session
   const pipeId = `ghostpipe-${Math.random().toString(36).substring(7)}`
   
@@ -118,7 +133,7 @@ const createSession = (host, signalingServer) => {
     }
   })
   
-  console.log(`Pipe created: ${pipeId}`)
+  if (VERBOSE) console.log(`\nPipe created for ${name}: ${pipeId}`)
   
   // URL-encode the signaling server URL
   const encodedSignaling = encodeURIComponent(signalingServer)
@@ -132,7 +147,7 @@ const createSession = (host, signalingServer) => {
     connectUrl = `http://${host}?pipe=${pipeId}&signaling=${encodedSignaling}`
   }
   
-  console.log(`Connect at: ${connectUrl}`)
+  console.log(`${name}: ${connectUrl}`)
   
   // Set up basic Y.js data structures
   const files = ydoc.getMap('files')
@@ -142,19 +157,26 @@ const createSession = (host, signalingServer) => {
   metadata.set('created', new Date().toISOString())
   metadata.set('cwd', process.cwd())
   
-  // Load all files from current directory
-  console.log('Loading files from current directory...')
-  const allFiles = getAllFiles(process.cwd())
+  // Load files from current directory (filtered if allowedFiles is specified)
+  const allFiles = getAllFiles(process.cwd(), '', [], allowedFiles)
   
   if (allFiles.length === 0) {
-    console.log('No files found in current directory')
-    files.set('welcome.txt', 'No files found in the current directory')
+    if (allowedFiles) {
+      if (VERBOSE) console.log(`No matching files found for ${name}`)
+      files.set('info.txt', `No files found matching the filter for ${name}`)
+    } else {
+      if (VERBOSE) console.log('No files found in current directory')
+      files.set('welcome.txt', 'No files found in the current directory')
+    }
   } else {
-    console.log(`Loading ${allFiles.length} files...`)
+    if (allowedFiles) {
+      if (VERBOSE) console.log(`Loading ${allFiles.length} files for ${name}:`, allowedFiles)
+    } else {
+      if (VERBOSE) console.log(`Loading ${allFiles.length} files...`)
+    }
     allFiles.forEach(file => {
       files.set(file.path, file.content)
     })
-    console.log(`Loaded ${allFiles.length} files`)
   }
   
   // Track if we're currently updating from GUI to avoid loops
@@ -164,6 +186,12 @@ const createSession = (host, signalingServer) => {
   files.observe((event) => {
     updatingFromGUI = true
     event.changes.keys.forEach((change, key) => {
+      // If allowedFiles is specified, only allow changes to those files
+      if (allowedFiles && !allowedFiles.includes(key)) {
+        if (VERBOSE) console.log(`Ignoring change to restricted file: ${key}`)
+        return
+      }
+      
       if (change.action === 'update' || change.action === 'add') {
         const content = files.get(key)
         const filePath = path.join(process.cwd(), key)
@@ -177,7 +205,7 @@ const createSession = (host, signalingServer) => {
           
           // Write the file
           fs.writeFileSync(filePath, content, 'utf8')
-          console.log(`Updated file: ${key}`)
+          if (VERBOSE) console.log(`[${name}] Updated file: ${key}`)
         } catch (err) {
           console.error(`Error writing file ${key}:`, err.message)
         }
@@ -187,7 +215,7 @@ const createSession = (host, signalingServer) => {
         try {
           if (fs.existsSync(filePath)) {
             fs.unlinkSync(filePath)
-            console.log(`Deleted file: ${key}`)
+            if (VERBOSE) console.log(`[${name}] Deleted file: ${key}`)
           }
         } catch (err) {
           console.error(`Error deleting file ${key}:`, err.message)
@@ -202,6 +230,11 @@ const createSession = (host, signalingServer) => {
   const watchTimeout = new Map()
   
   const watchFile = (relativePath) => {
+    // Only watch files that are in the allowed list (if specified)
+    if (allowedFiles && !allowedFiles.includes(relativePath)) {
+      return
+    }
+    
     const fullPath = path.join(process.cwd(), relativePath)
     
     if (watchedFiles.has(relativePath)) {
@@ -223,7 +256,7 @@ const createSession = (host, signalingServer) => {
                 const currentContent = files.get(relativePath)
                 if (content !== currentContent) {
                   files.set(relativePath, content)
-                  console.log(`Local file changed: ${relativePath}`)
+                  if (VERBOSE) console.log(`[${name}] Local file changed: ${relativePath}`)
                 }
               } catch (err) {
                 console.error(`Error reading changed file ${relativePath}:`, err.message)
@@ -258,6 +291,11 @@ const createSession = (host, signalingServer) => {
       return
     }
     
+    // If allowedFiles is specified, only watch those files
+    if (allowedFiles && !allowedFiles.includes(filename)) {
+      return
+    }
+    
     const fullPath = path.join(process.cwd(), filename)
     
     // Debounce directory changes
@@ -275,7 +313,7 @@ const createSession = (host, signalingServer) => {
               const currentContent = files.get(filename)
               if (content !== currentContent) {
                 files.set(filename, content)
-                console.log(`Local file added/changed: ${filename}`)
+                if (VERBOSE) console.log(`[${name}] Local file added/changed: ${filename}`)
                 watchFile(filename)
               }
             } catch (err) {
@@ -286,7 +324,7 @@ const createSession = (host, signalingServer) => {
           // File was deleted
           if (files.has(filename)) {
             files.delete(filename)
-            console.log(`Local file deleted: ${filename}`)
+            if (VERBOSE) console.log(`[${name}] Local file deleted: ${filename}`)
             if (watchedFiles.has(filename)) {
               watchedFiles.get(filename).close()
               watchedFiles.delete(filename)
@@ -300,24 +338,17 @@ const createSession = (host, signalingServer) => {
     }, 100))
   })
   
-  // Keep the process running
-  console.log('\nGhostpipe is running. Press Ctrl+C to stop.')
-  
-  // Handle cleanup on exit
-  process.on('SIGINT', () => {
-    console.log('\nShutting down Ghostpipe...')
+  // Return cleanup function
+  return () => {
     provider.destroy()
-    
-    // Clean up file watchers
     watchedFiles.forEach(watcher => watcher.close())
     dirWatcher.close()
-    
-    process.exit(0)
-  })
+  }
 }
 
 const main = () => {
   const parsed = parseArgs(args)
+  VERBOSE = parsed.verbose
   
   if (parsed.showHelp) {
     console.log('ghostpipe - CLI tool')
@@ -327,6 +358,10 @@ const main = () => {
     console.log('  --help         Show help')
     console.log('  -h, --host     Specify host URL')
     console.log('  -v, --version  Show version')
+    console.log('  --verbose      Enable verbose logging')
+    console.log('\nConfiguration:')
+    console.log('  Create a .ghostpipe.json file in your project or ~/.config/')
+    console.log('  to configure multiple hosts with file restrictions')
     return
   }
 
@@ -337,7 +372,6 @@ const main = () => {
   }
   
   const config = loadConfig()
-  const resolvedHost = parsed.host || config.host || DEFAULT_HOST
   const signalingServer = config.signalingServer || DEFAULT_SIGNALING_SERVER
   
   if (parsed.command) {
@@ -346,8 +380,44 @@ const main = () => {
     process.exit(1)
   }
   
-  // No command provided - create a Y.js session
-  createSession(resolvedHost, signalingServer)
+  // Check if config has hosts array
+  if (config.hosts && Array.isArray(config.hosts) && config.hosts.length > 0) {
+    if (VERBOSE) {
+      console.log('Starting Ghostpipe with multiple hosts...')
+      console.log(`Found ${config.hosts.length} host configuration(s)`)
+    }
+    
+    const cleanupFunctions = []
+    
+    // Create a session for each host
+    config.hosts.forEach((hostConfig) => {
+      const cleanup = createSession(hostConfig, signalingServer)
+      cleanupFunctions.push(cleanup)
+    })
+    
+    console.log('\nAll pipes are running. Press Ctrl+C to stop.')
+    
+    // Handle cleanup on exit
+    process.on('SIGINT', () => {
+      console.log('\nShutting down all Ghostpipe connections...')
+      cleanupFunctions.forEach(cleanup => cleanup())
+      process.exit(0)
+    })
+  } else {
+    // Fall back to single host mode
+    const resolvedHost = parsed.host || config.host || DEFAULT_HOST
+    if (VERBOSE) console.log('Starting Ghostpipe in single host mode...')
+    const cleanup = createSession(resolvedHost, signalingServer)
+    
+    console.log('\nGhostpipe is running. Press Ctrl+C to stop.')
+    
+    // Handle cleanup on exit
+    process.on('SIGINT', () => {
+      console.log('\nShutting down Ghostpipe...')
+      cleanup()
+      process.exit(0)
+    })
+  }
 }
 
 main()
