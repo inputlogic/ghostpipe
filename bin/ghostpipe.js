@@ -3,6 +3,7 @@
 const fs = require('fs')
 const path = require('path')
 const os = require('os')
+const { execSync } = require('child_process')
 const { Doc: YDoc } = require('yjs')
 const { WebrtcProvider } = require('y-webrtc')
 const wrtc = require('@roamhq/wrtc')
@@ -346,6 +347,98 @@ const createSession = (hostConfig, signalingServer) => {
   }
 }
 
+const createDiffSession = (baseBranch, headBranch, signalingServer) => {
+  // Generate a random pipe ID for this diff session
+  const pipeId = `ghostpipe-diff-${Math.random().toString(36).substring(7)}`
+  
+  // Create a new Y.js document
+  const ydoc = new YDoc()
+  
+  // Create WebRTC provider for collaboration
+  const provider = new WebrtcProvider(pipeId, ydoc, {
+    signaling: [signalingServer],
+    peerOpts: {
+      wrtc: wrtc
+    }
+  })
+  
+  if (VERBOSE) console.log(`\nDiff pipe created: ${pipeId}`)
+  
+  // Set up Y.js data structures for diff mode
+  const baseFiles = ydoc.getMap('base-files')
+  const headFiles = ydoc.getMap('head-files')
+  const metadata = ydoc.getMap('metadata')
+  
+  // Set diff metadata
+  metadata.set('mode', 'diff')
+  metadata.set('baseBranch', baseBranch)
+  metadata.set('headBranch', headBranch)
+  metadata.set('created', new Date().toISOString())
+  
+  try {
+    // Get list of changed files
+    const changedFilesOutput = execSync(
+      `git diff --name-only ${baseBranch}...${headBranch}`
+    ).toString().trim()
+    
+    if (!changedFilesOutput) {
+      console.log('No files changed between branches')
+      metadata.set('changedFiles', [])
+    } else {
+      const changedFiles = changedFilesOutput.split('\n')
+      metadata.set('changedFiles', changedFiles)
+      
+      if (VERBOSE) console.log(`Loading ${changedFiles.length} changed files...`)
+      
+      // Load each changed file from both branches
+      changedFiles.forEach(file => {
+        try {
+          // Get file content from base branch
+          const baseContent = execSync(`git show ${baseBranch}:${file} 2>/dev/null`, {
+            encoding: 'utf8',
+            stdio: ['pipe', 'pipe', 'ignore']
+          })
+          baseFiles.set(file, baseContent)
+        } catch {
+          // File doesn't exist in base branch (new file)
+          baseFiles.set(file, '')
+          if (VERBOSE) console.log(`  ${file}: new file (not in ${baseBranch})`)
+        }
+        
+        try {
+          // Get file content from head branch
+          const headContent = execSync(`git show ${headBranch}:${file} 2>/dev/null`, {
+            encoding: 'utf8',
+            stdio: ['pipe', 'pipe', 'ignore']
+          })
+          headFiles.set(file, headContent)
+        } catch {
+          // File doesn't exist in head branch (deleted file)
+          headFiles.set(file, '')
+          if (VERBOSE) console.log(`  ${file}: deleted (not in ${headBranch})`)
+        }
+      })
+    }
+  } catch (error) {
+    console.error('Error getting diff:', error.message)
+    provider.destroy()
+    process.exit(1)
+  }
+  
+  // URL-encode the signaling server URL
+  const encodedSignaling = encodeURIComponent(signalingServer)
+  
+  // Generate diff URL
+  const diffUrl = `${DEFAULT_HOST}/diff?pipe=${pipeId}&signaling=${encodedSignaling}`
+  console.log(`\nDiff view: ${diffUrl}`)
+  console.log(`Comparing: ${baseBranch} → ${headBranch}`)
+  
+  // Return cleanup function
+  return () => {
+    provider.destroy()
+  }
+}
+
 const main = () => {
   const parsed = parseArgs(args)
   VERBOSE = parsed.verbose
@@ -354,6 +447,14 @@ const main = () => {
     console.log('ghostpipe - CLI tool')
     console.log('\nUsage:')
     console.log('  ghostpipe [options] [command]')
+    console.log('  ghostpipe diff [base] [head]')
+    console.log('\nCommands:')
+    console.log('  diff           Compare files between git branches')
+    console.log('                 Default: current branch vs main/master')
+    console.log('                 Examples:')
+    console.log('                   ghostpipe diff              # current vs main')
+    console.log('                   ghostpipe diff develop      # current vs develop')
+    console.log('                   ghostpipe diff main feature # main vs feature')
     console.log('\nOptions:')
     console.log('  --help         Show help')
     console.log('  -h, --host     Specify host URL')
@@ -373,6 +474,90 @@ const main = () => {
   
   const config = loadConfig()
   const signalingServer = config.signalingServer || DEFAULT_SIGNALING_SERVER
+  
+  // Handle diff command
+  if (parsed.command === 'diff') {
+    // Check if we're in a git repository
+    try {
+      execSync('git rev-parse --git-dir', { stdio: 'ignore' })
+    } catch {
+      console.error('Error: Not in a git repository')
+      process.exit(1)
+    }
+    
+    // Get current branch
+    let currentBranch
+    try {
+      currentBranch = execSync('git branch --show-current').toString().trim()
+      if (!currentBranch) {
+        console.error('Error: Could not determine current branch (detached HEAD?)')
+        process.exit(1)
+      }
+    } catch (error) {
+      console.error('Error getting current branch:', error.message)
+      process.exit(1)
+    }
+    
+    // Detect default branch (main or master)
+    let defaultBranch = 'main'
+    try {
+      execSync('git show-ref --verify refs/heads/main', { stdio: 'ignore' })
+    } catch {
+      try {
+        execSync('git show-ref --verify refs/heads/master', { stdio: 'ignore' })
+        defaultBranch = 'master'
+      } catch {
+        console.error('Error: No main or master branch found')
+        process.exit(1)
+      }
+    }
+    
+    // Parse diff arguments
+    const diffArgs = args.slice(args.indexOf('diff') + 1).filter(arg => !arg.startsWith('--'))
+    let baseBranch = defaultBranch
+    let headBranch = currentBranch
+    
+    if (diffArgs.length === 1) {
+      baseBranch = diffArgs[0]
+      headBranch = currentBranch
+    } else if (diffArgs.length === 2) {
+      baseBranch = diffArgs[0]
+      headBranch = diffArgs[1]
+    } else if (diffArgs.length > 2) {
+      console.error('Error: Too many arguments for diff command')
+      console.log('Usage: ghostpipe diff [base] [head]')
+      process.exit(1)
+    }
+    
+    // Verify branches exist
+    try {
+      execSync(`git show-ref --verify refs/heads/${baseBranch}`, { stdio: 'ignore' })
+    } catch {
+      console.error(`Error: Branch '${baseBranch}' does not exist`)
+      process.exit(1)
+    }
+    
+    try {
+      execSync(`git show-ref --verify refs/heads/${headBranch}`, { stdio: 'ignore' })
+    } catch {
+      console.error(`Error: Branch '${headBranch}' does not exist`)
+      process.exit(1)
+    }
+    
+    if (VERBOSE) console.log(`Starting diff mode: ${baseBranch} → ${headBranch}`)
+    const cleanup = createDiffSession(baseBranch, headBranch, signalingServer)
+    
+    console.log('\nGhostpipe diff is running. Press Ctrl+C to stop.')
+    
+    // Handle cleanup on exit
+    process.on('SIGINT', () => {
+      console.log('\nShutting down Ghostpipe diff...')
+      cleanup()
+      process.exit(0)
+    })
+    
+    return
+  }
   
   if (parsed.command) {
     console.log('Unknown command:', parsed.command)
