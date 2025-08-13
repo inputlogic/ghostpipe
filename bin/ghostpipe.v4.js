@@ -4,7 +4,6 @@ const fs = require('fs')
 const path = require('path')
 const os = require('os')
 const { execSync } = require('child_process')
-const { Command } = require('commander')
 const { Doc: YDoc } = require('yjs')
 const { WebrtcProvider } = require('y-webrtc')
 const wrtc = require('@roamhq/wrtc')
@@ -13,6 +12,27 @@ const wrtc = require('@roamhq/wrtc')
 const DEFAULT_HOST = 'https://ghostpipe.dev'
 const DEFAULT_SIGNALING = 'wss://signaling.ghostpipe.dev'
 const IGNORED_PATHS = ['.', 'node_modules', 'dist', 'build', '.git']
+const HELP = `ghostpipe - CLI tool
+Usage:
+  ghostpipe [options] [command]
+  ghostpipe diff [base] [head]
+
+Commands:
+  diff           Compare files between git branches
+                 Examples:
+                   ghostpipe diff              # current vs main
+                   ghostpipe diff develop      # current vs develop
+                   ghostpipe diff main feature # main vs feature
+
+Options:
+  --help         Show help
+  --host         Specify host URL
+  --version      Show version
+  --verbose      Enable verbose logging
+
+Configuration:
+  Create .ghostpipe.json in your project or ~/.config/
+  to configure multiple hosts with file restrictions`
 
 let VERBOSE = false
 const log = (...args) => VERBOSE && console.log(...args)
@@ -37,6 +57,17 @@ const safeWriteFile = (filePath, content) => {
   }
 }
 
+const safeExecuteGit = (command) => {
+  try {
+    return execSync(command, { 
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'ignore']
+    }).trim()
+  } catch (error) {
+    return null
+  }
+}
+
 // Config & Args
 const loadConfig = () => {
   const configPaths = [
@@ -57,20 +88,49 @@ const loadConfig = () => {
   return {}
 }
 
-// Interface configuration utilities
-const createInterfaceConfig = (interfaceConfig) => {
-  if (typeof interfaceConfig === 'string') {
+const parseArgs = (args) => {
+  const parsed = {
+    command: null,
+    showHelp: false,
+    showVersion: false,
+    verbose: false,
+    host: null
+  }
+  
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]
+    
+    if (arg === '--help' || arg === '-h') {
+      parsed.showHelp = true
+    } else if (arg === '--version' || arg === '-v') {
+      parsed.showVersion = true
+    } else if (arg === '--verbose') {
+      parsed.verbose = true
+    } else if (arg === '--host' && args[i + 1]) {
+      parsed.host = args[i + 1]
+      i++ // Skip next argument as it's the host value
+    } else if (!arg.startsWith('-') && !parsed.command) {
+      parsed.command = arg
+    }
+  }
+  
+  return parsed
+}
+
+// Host configuration utilities
+const createHostConfig = (hostConfig) => {
+  if (typeof hostConfig === 'string') {
     return {
-      host: interfaceConfig,
+      host: hostConfig,
       name: 'Default',
       allowedFiles: null
     }
   }
   
   return {
-    host: interfaceConfig.host,
-    name: interfaceConfig.name || 'Default',
-    allowedFiles: interfaceConfig.files || null
+    host: hostConfig.host,
+    name: hostConfig.name || 'Default',
+    allowedFiles: hostConfig.files || null
   }
 }
 
@@ -252,8 +312,8 @@ const setupFileWatching = (allFiles, files, name, allowedFiles, syncState) => {
 }
 
 // Main Session
-const createSession = (interfaceConfig, signalingServer) => {
-  const { host, name, allowedFiles } = createInterfaceConfig(interfaceConfig)
+const createSession = (hostConfig, signalingServer) => {
+  const { host, name, allowedFiles } = createHostConfig(hostConfig)
   const pipeId = `ghostpipe-${Math.random().toString(36).substring(7)}`
   const { ydoc, provider } = createProvider(pipeId, signalingServer)
   
@@ -278,11 +338,45 @@ const createSession = (interfaceConfig, signalingServer) => {
   }
 }
 
+// Diff utilities
+const loadBranchFiles = (changedFiles, baseBranch, headBranch, baseFiles, headFiles, isWorkingDirectory) => {
+  changedFiles.forEach(file => {
+    // Load base branch file
+    const baseContent = safeExecuteGit(`git show ${baseBranch}:${file} 2>/dev/null`)
+    baseFiles.set(file, baseContent || '') // Empty string for new files
+    
+    // Load head branch file
+    if (isWorkingDirectory) {
+      const filePath = path.join(process.cwd(), file)
+      const content = safeReadFile(filePath)
+      headFiles.set(file, content || '')
+    } else {
+      const headContent = safeExecuteGit(`git show ${headBranch}:${file} 2>/dev/null`)
+      headFiles.set(file, headContent || '') // Empty string for deleted files
+    }
+  })
+}
+
+const getChangedFiles = (baseBranch, headBranch, isWorkingDirectory) => {
+  if (isWorkingDirectory) {
+    const branchDiff = safeExecuteGit(`git diff --name-only ${baseBranch}...${headBranch}`)
+    const workingDiff = safeExecuteGit(`git diff --name-only ${baseBranch}`)
+    
+    const branchFiles = branchDiff ? branchDiff.split('\n').filter(Boolean) : []
+    const workingFiles = workingDiff ? workingDiff.split('\n').filter(Boolean) : []
+    
+    return Array.from(new Set([...branchFiles, ...workingFiles]))
+  } else {
+    const diffOutput = safeExecuteGit(`git diff --name-only ${baseBranch}...${headBranch}`)
+    return diffOutput ? diffOutput.split('\n').filter(Boolean) : []
+  }
+}
+
 // Diff Session
-const createDiffSession = (interfaceConfig, baseBranch, headBranch, signalingServer) => {
-  const { name = 'Default', host, files: allowedFiles = null } = typeof interfaceConfig === 'string' 
-    ? { host: interfaceConfig, name: 'Default', files: null }
-    : interfaceConfig
+const createDiffSession = (hostConfig, baseBranch, headBranch, signalingServer) => {
+  const { name = 'Default', host, files: allowedFiles = null } = typeof hostConfig === 'string' 
+    ? { host: hostConfig, name: 'Default', files: null }
+    : hostConfig
   const pipeId = `ghostpipe-diff-${Math.random().toString(36).substring(7)}`
   const { ydoc, provider } = createProvider(pipeId, signalingServer)
   
@@ -536,23 +630,23 @@ const handleDiff = (config, signalingServer, diffArgs) => {
   gitUtils.verifyBranch(baseBranch)
   gitUtils.verifyBranch(headBranch)
   
-  if (!config.interfaces || config.interfaces.length === 0) {
-    console.error('Error: No interfaces configured. Please create a .ghostpipe.json config file.')
+  if (!config.hosts || config.hosts.length === 0) {
+    console.error('Error: No hosts configured. Please create a .ghostpipe.json config file.')
     process.exit(1)
   }
   
   console.log(`\nComparing: ${baseBranch} ↔ ${headBranch}${currentBranch === headBranch ? ' (with working changes)' : ''}`)
   
-  return config.interfaces.map(interfaceConfig => createDiffSession(interfaceConfig, baseBranch, headBranch, signalingServer))
+  return config.hosts.map(host => createDiffSession(host, baseBranch, headBranch, signalingServer))
 }
 
-const handleFileSharing = (config, signalingServer, options) => {
-  if (config.interfaces && config.interfaces.length > 0) {
-    log(`Starting with ${config.interfaces.length} interface(s)...`)
-    return config.interfaces.map(interfaceConfig => createSession(interfaceConfig, signalingServer))
+const handleFileSharing = (config, signalingServer, parsed) => {
+  if (config.hosts && config.hosts.length > 0) {
+    log(`Starting with ${config.hosts.length} host(s)...`)
+    return config.hosts.map(host => createSession(host, signalingServer))
   } else {
-    log('Starting in single interface mode...')
-    const host = options.host || config.host || DEFAULT_HOST
+    log('Starting in single host mode...')
+    const host = parsed.host || config.host || DEFAULT_HOST
     return [createSession(host, signalingServer)]
   }
 }
@@ -566,41 +660,45 @@ const setupShutdownHandler = (cleanups) => {
 }
 
 // Main
-const program = new Command()
-
-program
-  .name('ghostpipe')
-  .description('CLI tool that connects codebase files to GUIs')
-  .version(require('../package.json').version)
-  .option('--verbose', 'Enable verbose logging')
-  .option('--host <url>', 'Specify host URL')
-
-// Default file sharing action
-program.action((options) => {
-  VERBOSE = options.verbose
+const main = () => {
+  const parsed = parseArgs(process.argv.slice(2))
+  VERBOSE = parsed.verbose
+  
+  if (parsed.showHelp) {
+    console.log(HELP)
+    return
+  }
+  
+  if (parsed.showVersion) {
+    console.log(`ghostpipe v${require('../package.json').version}`)
+    return
+  }
+  
   const config = loadConfig()
   const signalingServer = config.signalingServer || DEFAULT_SIGNALING
   
-  const cleanups = handleFileSharing(config, signalingServer, options)
-  console.log('\nPress Ctrl+C to stop.')
-  setupShutdownHandler(cleanups)
-})
-
-// Diff command
-program
-  .command('diff')
-  .description('Compare files between git branches')
-  .argument('[base]', 'Base branch (defaults to main/master)')
-  .argument('[head]', 'Head branch (defaults to current)')
-  .action((base, head, options) => {
-    VERBOSE = program.opts().verbose
-    const config = loadConfig()
-    const signalingServer = config.signalingServer || DEFAULT_SIGNALING
+  // Handle diff command
+  if (parsed.command === 'diff') {
+    const diffArgs = process.argv.slice(2)
+      .slice(process.argv.slice(2).indexOf('diff') + 1)
+      .filter(arg => !arg.startsWith('--'))
     
-    const diffArgs = [base, head].filter(Boolean)
     const cleanups = handleDiff(config, signalingServer, diffArgs)
-    console.log('\nPress Ctrl+C to stop.')
+    console.log('\nDiff pipes running. Press Ctrl+C to stop.')
     setupShutdownHandler(cleanups)
-  })
+    return
+  }
+  
+  // Handle unknown commands
+  if (parsed.command) {
+    console.log(`Unknown command: ${parsed.command}\nRun "ghostpipe --help" for usage`)
+    process.exit(1)
+  }
+  
+  // Normal file sharing mode
+  const cleanups = handleFileSharing(config, signalingServer, parsed)
+  console.log('\nPipes running. Press Ctrl+C to stop.')
+  setupShutdownHandler(cleanups)
+}
 
-program.parse()
+main()
