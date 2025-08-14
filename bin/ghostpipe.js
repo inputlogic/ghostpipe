@@ -13,7 +13,7 @@ const chokidar = require('chokidar')
 // Constants
 const DEFAULT_HOST = 'https://ghostpipe.dev'
 const DEFAULT_SIGNALING = 'wss://signaling.ghostpipe.dev'
-const IGNORED_PATHS = ['.', 'node_modules', 'dist', 'build', '.git']
+const IGNORED_PATHS = ['node_modules', 'dist', 'build', '.git', '.DS_Store', '.env']
 
 let VERBOSE = false
 const log = (...args) => VERBOSE && console.log(...args)
@@ -36,6 +36,32 @@ const safeWriteFile = (filePath, content) => {
     console.error(`Error writing ${filePath}:`, error.message)
     return false
   }
+}
+
+const openBrowser = (url) => {
+  const { exec } = require('child_process')
+  
+  // Determine the command based on the platform
+  let command
+  switch (process.platform) {
+    case 'darwin':
+      command = `open "${url}"`
+      break
+    case 'win32':
+      command = `start "${url}"`
+      break
+    default: // Linux and other Unix-like systems
+      command = `xdg-open "${url}"`
+      break
+  }
+  
+  exec(command, (error) => {
+    if (error) {
+      log(`Failed to open browser: ${error.message}`)
+    } else {
+      log(`Browser opened with URL: ${url}`)
+    }
+  })
 }
 
 // Config & Args
@@ -80,7 +106,7 @@ const getAllFiles = (dirPath, basePath = '', fileList = [], allowedFiles = null)
   const files = fs.readdirSync(dirPath)
   
   for (const file of files) {
-    if (IGNORED_PATHS.some(ignored => file.startsWith(ignored))) {
+    if (IGNORED_PATHS.some(ignored => file === ignored || file.startsWith(ignored + '/'))) {
       continue
     }
     
@@ -90,12 +116,17 @@ const getAllFiles = (dirPath, basePath = '', fileList = [], allowedFiles = null)
     
     if (stat.isDirectory()) {
       getAllFiles(filePath, relativePath, fileList, allowedFiles)
-    } else if (stat.isFile() && (!allowedFiles || allowedFiles.includes(relativePath))) {
-      const content = safeReadFile(filePath)
-      if (content !== null) {
-        fileList.push({ path: relativePath, content })
+    } else if (stat.isFile()) {
+      if (allowedFiles && !allowedFiles.includes(relativePath)) {
+        log(`Skipping file (not in allowed list): ${relativePath}`)
       } else {
-        log(`Skipping binary: ${relativePath}`)
+        const content = safeReadFile(filePath)
+        if (content !== null) {
+          fileList.push({ path: relativePath, content })
+          log(`Added file: ${relativePath}`)
+        } else {
+          log(`Skipping binary: ${relativePath}`)
+        }
       }
     }
   }
@@ -118,7 +149,14 @@ const createProvider = (pipeId, signalingServer) => {
 
 const generateUrl = (host, pipeId, signalingServer, mode = 'gui') => {
   const baseUrl = host.startsWith('http') ? host : `http://${host}`
-  return `${baseUrl}/${mode}?pipe=${pipeId}&signaling=${encodeURIComponent(signalingServer)}`
+  const params = new URLSearchParams({
+    pipe: pipeId,
+    signaling: signalingServer
+  })
+  if (mode === 'diff') {
+    params.append('mode', mode)
+  }
+  return `${baseUrl}?${params.toString()}`
 }
 
 // Session setup utilities
@@ -279,34 +317,54 @@ const setupFileWatching = (allFiles, files, name, allowedFiles, syncState) => {
 }
 
 // Main Session
-const createSession = (interfaceConfig, signalingServer) => {
+const createSession = (interfaceConfig, signalingServer, interfaceUrls = null) => {
   const { host, name, allowedFiles } = createInterfaceConfig(interfaceConfig)
   const pipeId = `ghostpipe-${Math.random().toString(36).substring(7)}`
   const { ydoc, provider } = createProvider(pipeId, signalingServer)
   
   log(`\nPipe created for ${name}: ${pipeId}`)
-  console.log(`${name}: ${generateUrl(host, pipeId, signalingServer)}`)
+  const url = generateUrl(host, pipeId, signalingServer)
+  console.log(`${name}: ${url}`)
+  
+  // Store URL if collecting for manager
+  if (interfaceUrls !== null) {
+    interfaceUrls[name] = url
+  }
+  
+  // Auto-open browser if configured
+  if (typeof interfaceConfig === 'object' && interfaceConfig.open === true) {
+    openBrowser(url)
+  }
   
   const files = ydoc.getMap('files')
   setupSessionMetadata(ydoc)
   
   // Load initial files
   const allFiles = getAllFiles(process.cwd(), '', [], allowedFiles)
-  log(`Loading ${allFiles.length} files...`)
-  allFiles.forEach(file => files.set(file.path, file.content))
+  log(`[${name}] Loading ${allFiles.length} files...`)
+  if (allowedFiles) {
+    log(`[${name}] Allowed files filter: ${JSON.stringify(allowedFiles)}`)
+  }
+  allFiles.forEach(file => {
+    files.set(file.path, file.content)
+    log(`[${name}] Loaded file: ${file.path}`)
+  })
   
   // Setup file synchronization
   const syncState = setupFileSync(files, allowedFiles, name)
   const fileWatching = setupFileWatching(allFiles, files, name, allowedFiles, syncState)
   
-  return () => {
-    provider.destroy()
-    fileWatching.cleanup()
+  return {
+    provider,
+    cleanup: () => {
+      provider.destroy()
+      fileWatching.cleanup()
+    }
   }
 }
 
 // Diff Session
-const createDiffSession = (interfaceConfig, baseBranch, headBranch, signalingServer) => {
+const createDiffSession = (interfaceConfig, baseBranch, headBranch, signalingServer, interfaceUrls = null) => {
   const { name = 'Default', host, files: allowedFiles = null } = typeof interfaceConfig === 'string' 
     ? { host: interfaceConfig, name: 'Default', files: null }
     : interfaceConfig
@@ -346,7 +404,10 @@ const createDiffSession = (interfaceConfig, baseBranch, headBranch, signalingSer
     if (!changedFilesOutput) {
       console.log(`[${name}] No files changed between branches`)
       metadata.set('changedFiles', [])
-      return () => provider.destroy()
+      return {
+        provider,
+        cleanup: () => provider.destroy()
+      }
     }
     
     const changedFiles = changedFilesOutput.split('\n')
@@ -392,8 +453,19 @@ const createDiffSession = (interfaceConfig, baseBranch, headBranch, signalingSer
     process.exit(1)
   }
   
-  console.log(`${name}: ${generateUrl(host, pipeId, signalingServer, 'diff')}`)
+  const url = generateUrl(host, pipeId, signalingServer, 'diff')
+  console.log(`${name}: ${url}`)
   log(`  Comparing: ${baseBranch} ↔ ${headBranch}${isWorkingDirectory ? ' (with working changes)' : ''}`)
+  
+  // Store URL if collecting for manager
+  if (interfaceUrls !== null) {
+    interfaceUrls[name] = url
+  }
+  
+  // Auto-open browser if configured
+  if (typeof interfaceConfig === 'object' && interfaceConfig.open === true) {
+    openBrowser(url)
+  }
   
   let watcher = null
   
@@ -474,10 +546,13 @@ const createDiffSession = (interfaceConfig, baseBranch, headBranch, signalingSer
     })
   }
   
-  return () => {
-    provider.destroy()
-    if (watcher) {
-      watcher.close()
+  return {
+    provider,
+    cleanup: () => {
+      provider.destroy()
+      if (watcher) {
+        watcher.close()
+      }
     }
   }
 }
@@ -557,7 +632,30 @@ const handleDiff = (config, signalingServer, diffArgs) => {
   
   console.log(`\nComparing: ${baseBranch} ↔ ${headBranch}${currentBranch === headBranch ? ' (with working changes)' : ''}`)
   
-  return config.interfaces.map(interfaceConfig => createDiffSession(interfaceConfig, baseBranch, headBranch, signalingServer))
+  // Check if any interface is a manager
+  const hasManager = config.interfaces.some(iface => iface.manager === true)
+  
+  if (hasManager) {
+    // Collect URLs for all interfaces and share them with manager interfaces
+    const interfaceUrls = {}
+    const sessions = config.interfaces.map(interfaceConfig => {
+      const session = createDiffSession(interfaceConfig, baseBranch, headBranch, signalingServer, interfaceUrls)
+      return session
+    })
+    
+    // Share the collected URLs with all manager interfaces
+    sessions.forEach((session, index) => {
+      if (config.interfaces[index].manager === true && session.provider) {
+        const metadata = session.provider.doc.getMap('metadata')
+        metadata.set('interfaceUrls', interfaceUrls)
+        log(`[Manager] Shared ${Object.keys(interfaceUrls).length} interface URLs`)
+      }
+    })
+    
+    return sessions.map(s => s.cleanup)
+  }
+  
+  return config.interfaces.map(interfaceConfig => createDiffSession(interfaceConfig, baseBranch, headBranch, signalingServer).cleanup)
 }
 
 const handleFileSharing = (config, signalingServer, options) => {
@@ -567,7 +665,31 @@ const handleFileSharing = (config, signalingServer, options) => {
   }
   
   log(`Starting with ${config.interfaces.length} interface(s)...`)
-  return config.interfaces.map(interfaceConfig => createSession(interfaceConfig, signalingServer))
+  
+  // Check if any interface is a manager
+  const hasManager = config.interfaces.some(iface => iface.manager === true)
+  
+  if (hasManager) {
+    // Collect URLs for all interfaces and share them with manager interfaces
+    const interfaceUrls = {}
+    const sessions = config.interfaces.map(interfaceConfig => {
+      const session = createSession(interfaceConfig, signalingServer, interfaceUrls)
+      return session
+    })
+    
+    // Share the collected URLs with all manager interfaces
+    sessions.forEach((session, index) => {
+      if (config.interfaces[index].manager === true && session.provider) {
+        const metadata = session.provider.doc.getMap('metadata')
+        metadata.set('interfaceUrls', interfaceUrls)
+        log(`[Manager] Shared ${Object.keys(interfaceUrls).length} interface URLs`)
+      }
+    })
+    
+    return sessions.map(s => s.cleanup)
+  }
+  
+  return config.interfaces.map(interfaceConfig => createSession(interfaceConfig, signalingServer).cleanup)
 }
 
 const setupShutdownHandler = (cleanups) => {
