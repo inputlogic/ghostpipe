@@ -8,6 +8,7 @@ const { Command } = require('commander')
 const { Doc: YDoc } = require('yjs')
 const { WebrtcProvider } = require('y-webrtc')
 const wrtc = require('@roamhq/wrtc')
+const chokidar = require('chokidar')
 
 // Constants
 const DEFAULT_HOST = 'https://ghostpipe.dev'
@@ -102,23 +103,7 @@ const getAllFiles = (dirPath, basePath = '', fileList = [], allowedFiles = null)
   return fileList
 }
 
-const createFileWatcher = (relativePath, onChange, watchedFiles, watchTimeout) => {
-  const fullPath = path.join(process.cwd(), relativePath)
-  if (watchedFiles.has(relativePath)) return
-  
-  try {
-    const watcher = fs.watch(fullPath, eventType => {
-      clearTimeout(watchTimeout.get(relativePath))
-      watchTimeout.set(relativePath, setTimeout(() => {
-        onChange(relativePath, fullPath, eventType)
-        watchTimeout.delete(relativePath)
-      }, 100))
-    })
-    watchedFiles.set(relativePath, watcher)
-  } catch (err) {
-    console.error(`Error watching ${relativePath}:`, err.message)
-  }
-}
+// File watcher creation is now handled by chokidar in setupFileWatching
 
 // WebRTC & URL Generation
 const createProvider = (pipeId, signalingServer) => {
@@ -185,68 +170,110 @@ const setupFileSync = (files, allowedFiles, name) => {
 }
 
 const setupFileWatching = (allFiles, files, name, allowedFiles, syncState) => {
-  const watchedFiles = new Map()
-  const watchTimeout = new Map()
+  // Prepare file paths to watch
+  const filesToWatch = allFiles.map(file => path.join(process.cwd(), file.path))
   
-  const handleFileChange = (relativePath, fullPath) => {
+  // Create chokidar watcher with optimized settings
+  const watcher = chokidar.watch(filesToWatch, {
+    persistent: true,
+    ignoreInitial: true,
+    ignored: IGNORED_PATHS.map(p => `**/${p}/**`),
+    awaitWriteFinish: {
+      stabilityThreshold: 100,
+      pollInterval: 100
+    },
+    usePolling: false, // Avoid polling to reduce CPU usage
+    followSymlinks: false, // Don't follow symlinks to avoid loops
+    atomic: true // Handle atomic writes
+  })
+  
+  // Add current directory separately for new file detection
+  if (!allowedFiles) {
+    watcher.add(process.cwd())
+  }
+  
+  // Handle file changes
+  watcher.on('change', (fullPath) => {
     if (syncState.isUpdatingFromGUI()) {
       return
     }
     
+    const relativePath = path.relative(process.cwd(), fullPath)
+    
+    if (allowedFiles && !allowedFiles.includes(relativePath)) {
+      return
+    }
+    
     try {
-      if (fs.existsSync(fullPath)) {
-        const content = safeReadFile(fullPath)
-        if (content !== null && content !== files.get(relativePath)) {
+      const content = safeReadFile(fullPath)
+      if (content !== null && content !== files.get(relativePath)) {
+        // Wrap Y.js operation in try-catch to prevent crashes
+        try {
           files.set(relativePath, content)
           log(`[${name}] Local change: ${relativePath}`)
-        }
-      } else if (files.has(relativePath)) {
-        files.delete(relativePath)
-        log(`[${name}] Local delete: ${relativePath}`)
-        const watcher = watchedFiles.get(relativePath)
-        if (watcher) {
-          watcher.close()
-          watchedFiles.delete(relativePath)
+        } catch (yjsError) {
+          console.error(`Error updating Y.js document for ${relativePath}:`, yjsError.message)
         }
       }
     } catch (error) {
-      log(`Error handling change for ${relativePath}:`, error.message)
+      console.error(`Error handling change for ${relativePath}:`, error.message)
     }
-  }
-  
-  // Watch individual files
-  allFiles.forEach(file => {
-    createFileWatcher(file.path, handleFileChange, watchedFiles, watchTimeout)
   })
   
-  // Watch directory for new files
-  const dirWatcher = fs.watch(process.cwd(), { recursive: true }, (eventType, filename) => {
-    if (!filename || syncState.isUpdatingFromGUI()) {
+  // Handle new files
+  watcher.on('add', (fullPath) => {
+    if (syncState.isUpdatingFromGUI()) {
       return
     }
     
-    if (IGNORED_PATHS.some(ignored => filename.includes(ignored))) {
+    const relativePath = path.relative(process.cwd(), fullPath)
+    
+    if (IGNORED_PATHS.some(ignored => relativePath.includes(ignored))) {
       return
     }
     
-    if (allowedFiles && !allowedFiles.includes(filename)) {
+    if (allowedFiles && !allowedFiles.includes(relativePath)) {
       return
     }
     
-    clearTimeout(watchTimeout.get(filename))
-    watchTimeout.set(filename, setTimeout(() => {
-      handleFileChange(filename, path.join(process.cwd(), filename))
-      createFileWatcher(filename, handleFileChange, watchedFiles, watchTimeout)
-      watchTimeout.delete(filename)
-    }, 100))
+    try {
+      const content = safeReadFile(fullPath)
+      if (content !== null && !files.has(relativePath)) {
+        // Wrap Y.js operation in try-catch to prevent crashes
+        try {
+          files.set(relativePath, content)
+          log(`[${name}] Local add: ${relativePath}`)
+        } catch (yjsError) {
+          console.error(`Error adding file to Y.js document ${relativePath}:`, yjsError.message)
+        }
+      }
+    } catch (error) {
+      console.error(`Error handling new file ${relativePath}:`, error.message)
+    }
+  })
+  
+  // Handle file deletions
+  watcher.on('unlink', (fullPath) => {
+    if (syncState.isUpdatingFromGUI()) {
+      return
+    }
+    
+    const relativePath = path.relative(process.cwd(), fullPath)
+    
+    if (files.has(relativePath)) {
+      try {
+        files.delete(relativePath)
+        log(`[${name}] Local delete: ${relativePath}`)
+      } catch (yjsError) {
+        console.error(`Error deleting file from Y.js document ${relativePath}:`, yjsError.message)
+      }
+    }
   })
   
   return {
-    watchedFiles,
-    dirWatcher,
+    watcher,
     cleanup: () => {
-      watchedFiles.forEach(watcher => watcher.close())
-      dirWatcher.close()
+      watcher.close()
     }
   }
 }
@@ -368,103 +395,90 @@ const createDiffSession = (interfaceConfig, baseBranch, headBranch, signalingSer
   console.log(`${name}: ${generateUrl(host, pipeId, signalingServer, 'diff')}`)
   log(`  Comparing: ${baseBranch} ↔ ${headBranch}${isWorkingDirectory ? ' (with working changes)' : ''}`)
   
-  const watchedFiles = new Map()
-  const watchTimeout = new Map()
+  let watcher = null
   
-  // Watch working directory changes if applicable - using v1 working logic
+  // Watch working directory changes if applicable
   if (isWorkingDirectory) {
-    // Watch each file for changes - v1 implementation
-    const watchFile = (relativePath) => {
-      const fullPath = path.join(process.cwd(), relativePath)
-      
-      if (watchedFiles.has(relativePath)) {
-        return
-      }
-      
-      // Check if file exists before watching
-      if (!fs.existsSync(fullPath)) {
-        log(`[${name}] Skipping watch for non-existent file: ${relativePath}`)
-        return
-      }
-      
-      try {
-        log(`[${name}] Watching file: ${relativePath}`)
-        
-        const createWatcher = () => {
-          const watcher = fs.watch(fullPath, (eventType) => {
-            // Debounce rapid changes
-            if (watchTimeout.has(relativePath)) {
-              clearTimeout(watchTimeout.get(relativePath))
-            }
-            
-            watchTimeout.set(relativePath, setTimeout(() => {
-              log(`[${name}] Detected ${eventType} for: ${relativePath}`)
-              // Handle both 'change' and 'rename' events (macOS reports 'rename' for modifications)
-              if (eventType === 'change' || eventType === 'rename') {
-                try {
-                  if (!fs.existsSync(fullPath)) {
-                    log(`[${name}] File no longer exists: ${relativePath}`)
-                    return
-                  }
-                  
-                  const content = fs.readFileSync(fullPath, 'utf8')
-                  const currentContent = headFiles.get(relativePath)
-                  
-                  log(`[${name}] File size - old: ${currentContent ? currentContent.length : 0}, new: ${content.length}`)
-                  
-                  if (content !== currentContent) {
-                    // Use Y.js transaction to ensure proper sync
-                    ydoc.transact(() => {
-                      headFiles.set(relativePath, content)
-                    })
-                    log(`[${name}] Updated file in diff: ${relativePath} (${content.length} bytes)`)
-                  } else {
-                    log(`[${name}] File content unchanged: ${relativePath}`)
-                  }
-                  
-                  // Re-establish watcher after rename event (macOS issue)
-                  if (eventType === 'rename') {
-                    log(`[${name}] Re-establishing watcher for: ${relativePath}`)
-                    if (watchedFiles.has(relativePath)) {
-                      watchedFiles.get(relativePath).close()
-                    }
-                    // Small delay to let filesystem settle
-                    setTimeout(() => {
-                      if (fs.existsSync(fullPath)) {
-                        const newWatcher = createWatcher()
-                        watchedFiles.set(relativePath, newWatcher)
-                      }
-                    }, 50)
-                  }
-                } catch (err) {
-                  console.error(`[${name}] Error reading changed file ${relativePath}:`, err.message)
-                }
-              }
-              watchTimeout.delete(relativePath)
-            }, 100))
-          })
-          
-          return watcher
-        }
-        
-        const watcher = createWatcher()
-        watchedFiles.set(relativePath, watcher)
-      } catch (err) {
-        console.error(`[${name}] Error watching file ${relativePath}:`, err.message)
-      }
-    }
-    
-    // Start watching all tracked files
     const changedFiles = metadata.get('changedFiles') || []
     log(`[${name}] Setting up file watchers for ${changedFiles.length} files in working directory`)
-    changedFiles.forEach(file => {
-      watchFile(file)
+    
+    // Create full paths for changed files
+    const filesToWatch = changedFiles.map(file => path.join(process.cwd(), file))
+    
+    // Create chokidar watcher for diff mode
+    watcher = chokidar.watch(filesToWatch, {
+      persistent: true,
+      ignoreInitial: true,
+      awaitWriteFinish: {
+        stabilityThreshold: 100,
+        pollInterval: 100
+      },
+      usePolling: false, // Avoid polling to reduce CPU usage
+      followSymlinks: false, // Don't follow symlinks to avoid loops
+      atomic: true // Handle atomic writes
+    })
+    
+    // Handle file changes
+    watcher.on('change', (fullPath) => {
+      const relativePath = path.relative(process.cwd(), fullPath)
+      log(`[${name}] Detected change for: ${relativePath}`)
+      
+      try {
+        const content = fs.readFileSync(fullPath, 'utf8')
+        const currentContent = headFiles.get(relativePath)
+        
+        log(`[${name}] File size - old: ${currentContent ? currentContent.length : 0}, new: ${content.length}`)
+        
+        if (content !== currentContent) {
+          // Use Y.js transaction to ensure proper sync
+          ydoc.transact(() => {
+            headFiles.set(relativePath, content)
+          })
+          log(`[${name}] Updated file in diff: ${relativePath} (${content.length} bytes)`)
+        } else {
+          log(`[${name}] File content unchanged: ${relativePath}`)
+        }
+      } catch (err) {
+        console.error(`[${name}] Error reading changed file ${relativePath}:`, err.message)
+      }
+    })
+    
+    // Handle file deletions
+    watcher.on('unlink', (fullPath) => {
+      const relativePath = path.relative(process.cwd(), fullPath)
+      log(`[${name}] File deleted: ${relativePath}`)
+      
+      // Update headFiles to reflect deletion
+      if (headFiles.has(relativePath)) {
+        ydoc.transact(() => {
+          headFiles.set(relativePath, '')
+        })
+        log(`[${name}] Marked file as deleted in diff: ${relativePath}`)
+      }
+    })
+    
+    // Handle new files (if they were previously tracked but recreated)
+    watcher.on('add', (fullPath) => {
+      const relativePath = path.relative(process.cwd(), fullPath)
+      log(`[${name}] File added: ${relativePath}`)
+      
+      try {
+        const content = fs.readFileSync(fullPath, 'utf8')
+        ydoc.transact(() => {
+          headFiles.set(relativePath, content)
+        })
+        log(`[${name}] Added file to diff: ${relativePath}`)
+      } catch (err) {
+        console.error(`[${name}] Error reading new file ${relativePath}:`, err.message)
+      }
     })
   }
   
   return () => {
     provider.destroy()
-    watchedFiles.forEach(watcher => watcher.close())
+    if (watcher) {
+      watcher.close()
+    }
   }
 }
 
@@ -547,14 +561,13 @@ const handleDiff = (config, signalingServer, diffArgs) => {
 }
 
 const handleFileSharing = (config, signalingServer, options) => {
-  if (config.interfaces && config.interfaces.length > 0) {
-    log(`Starting with ${config.interfaces.length} interface(s)...`)
-    return config.interfaces.map(interfaceConfig => createSession(interfaceConfig, signalingServer))
-  } else {
-    log('Starting in single interface mode...')
-    const host = options.host || config.host || DEFAULT_HOST
-    return [createSession(host, signalingServer)]
+  if (!config.interfaces || config.interfaces.length === 0) {
+    console.error('Error: No interfaces configured. Please create a .ghostpipe.json config file with an "interfaces" array.')
+    process.exit(1)
   }
+  
+  log(`Starting with ${config.interfaces.length} interface(s)...`)
+  return config.interfaces.map(interfaceConfig => createSession(interfaceConfig, signalingServer))
 }
 
 const setupShutdownHandler = (cleanups) => {
@@ -563,6 +576,25 @@ const setupShutdownHandler = (cleanups) => {
     cleanups.forEach(cleanup => cleanup())
     process.exit(0)
   })
+  
+  // Handle segmentation faults and other crashes
+  process.on('uncaughtException', (error) => {
+    console.error('\nUncaught exception:', error.message)
+    console.error(error.stack)
+    cleanups.forEach(cleanup => {
+      try {
+        cleanup()
+      } catch (cleanupError) {
+        // Ignore cleanup errors during crash
+      }
+    })
+    process.exit(1)
+  })
+  
+  process.on('unhandledRejection', (reason, promise) => {
+    console.error('\nUnhandled Rejection at:', promise, 'reason:', reason)
+    // Don't exit on unhandled rejection, just log it
+  })
 }
 
 // Main
@@ -570,10 +602,9 @@ const program = new Command()
 
 program
   .name('ghostpipe')
-  .description('CLI tool that connects codebase files to GUIs')
+  .description('CLI tool that connects codebase files to GUIs (requires interfaces configuration)')
   .version(require('../package.json').version)
   .option('--verbose', 'Enable verbose logging')
-  .option('--host <url>', 'Specify host URL')
 
 // Default file sharing action
 program.action((options) => {
