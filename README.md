@@ -21,7 +21,6 @@ ghostpipe
 With options:
 ```bash
 ghostpipe --verbose           # Enable verbose logging
-ghostpipe --host <url>        # Specify custom host URL
 ```
 
 ### Diff Mode
@@ -40,17 +39,17 @@ Create a `.ghostpipe.json` file in your project root or `~/.config/ghostpipe.jso
 
 ```json
 {
-  "host": "https://your-host.com",
   "signalingServer": "wss://your-signaling.com",
   "interfaces": [
     {
-      "name": "Production",
-      "host": "https://prod.example.com",
-      "files": ["src/**/*.js", "docs/**/*.md"]
+      "name": "Coolify",
+      "host": "https://coolify-ghostpipe.example.com",
+      "files": [".ghostpipe/coolify.yml"]
     },
     {
-      "name": "Development", 
-      "host": "https://dev.example.com"
+      "name": "ERD",
+      "host": "https://erd-ghostpipe.example.com",
+      "files": [".ghostpipe/erd.yml"]
     }
   ]
 }
