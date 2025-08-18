@@ -9,6 +9,11 @@ A CLI tool to connect codebase files to user interfaces.
 - `npm link`
 - now you should be able to run `ghostpipe` from any project
 
+## How it works
+
+When you run `ghostpipe` in a project, it will look for a .ghostpipe.json file that lists the interfaces you are using.
+The CLI tool will then list a url for each interface. Each url includes `pipe` and `signaling` query params. The interfaces will use these 2 query params to connect to the local repo using yjs and webrtc. See use-ghostpipe.js for a nextjs example hook.
+
 ## Installation
 
 ```bash
