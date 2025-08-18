@@ -2,6 +2,13 @@
 
 A CLI tool to connect codebase files to user interfaces.
 
+## Local development
+
+- clone the repo
+- `npm install`
+- `npm link`
+- now you should be able to run `ghostpipe` from any project
+
 ## Installation
 
 ```bash
