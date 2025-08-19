@@ -4,13 +4,13 @@ const { Command } = require('commander')
 const { Doc: YDoc } = require('yjs')
 const { WebrtcProvider } = require('y-webrtc')
 const { minimatch } = require('minimatch')
-const path = require('path')
 const wrtc = require('@roamhq/wrtc')
 const fs = require('fs')
 const chokidar = require('chokidar')
 const { execSync } = require('child_process')
 
 const program = new Command()
+const DEFAULT_SIGNALING_SERVER = 'wss://signaling.ghostpipe.dev'
 let VERBOSE = false
 
 program
@@ -29,11 +29,11 @@ const log = (...args) => VERBOSE && console.log(...args)
 log.error = (...args) => VERBOSE && console.error(...args)
 
 const connect = ({diff}) => {
+  diff = diff === true ? 'main' : diff
   const options = {
-    signalingServer: 'wss://signaling.ghostpipe.dev'
+    signalingServer: DEFAULT_SIGNALING_SERVER
   }
   const config = readJson('.ghostpipe.json')
-  const filesBeingUpdatedFromRemote = new Set()
   const interfaces = config.interfaces.map(intf => {
     const pipe = crypto.randomBytes(16).toString('hex')
     const params = new URLSearchParams({
@@ -44,15 +44,8 @@ const connect = ({diff}) => {
     const provider = new WebrtcProvider(pipe, ydoc, {signaling: [options.signalingServer], peerOpts: { wrtc }})
     ydoc.getMap('files').observe(event => {
       event.changes.keys.forEach((change, key) => {
-        // const match = findMatch('w', intf.files, key)
-        if (!hasPermission('w', intf.files, key)) return
-        const currentContent = ydoc.getMap('files').get(key)
-        const fileContent = fs.readFileSync(key, 'utf8')
-        if (currentContent === fileContent) return
         if (change.action === 'update' || change.action === 'add') {
-          log('file change remote', key)
-          filesBeingUpdatedFromRemote.add(key)
-          fs.writeFileSync(key, currentContent, 'utf8')
+          debouncedWriteFile(key, ydoc, intf, diff)
         } else if (change.action === 'delete') {
           log('TODO: handle delete file')
         }
@@ -67,57 +60,24 @@ const connect = ({diff}) => {
   })
   chokidar.watch('.').on('all', (event, path) => {
     if (event === 'add') {
-      const content = fs.readFileSync(path, 'utf8')
-      interfaces.filter(intf => hasPermission('r', intf.files, path)).forEach(intf => {
-        log('file add', path)
-        intf.ydoc.getMap('files').set(path, content)
-      })
+      debouncedAdd(path, interfaces, diff)
     }
     if (event === 'change') {
-      if (filesBeingUpdatedFromRemote.has(path)) {
-        filesBeingUpdatedFromRemote.delete(path)
-        return
-      }
-      const fileContent = fs.readFileSync(path, 'utf8')
-      interfaces.filter(intf => hasPermission('r', intf.files, path)).forEach(intf => {
-        const content = intf.ydoc.getMap('files').get(path)
-        if (content !== fileContent) {
-          log('file change local', path)
-          intf.ydoc.getMap('files').set(path, fileContent)
-        }
-      })
+      debouncedChange(path, interfaces, diff)
     }
   })
+}
 
-  if (diff) {
-    diff = diff === true ? 'main' : diff
-    
-    try {
-      // Get list of changed files between current branch and diff branch
-      const changedFiles = execSync(`git diff --name-only ${diff}...HEAD`, { encoding: 'utf8' })
-        .trim()
-        .split('\n')
-        .filter(Boolean)
-      
-      interfaces.forEach(intf => {
-        changedFiles.forEach(file => {
-          if (hasPermission('r', intf.files, file)) {
-            try {
-              const content = execSync(`git show ${diff}:${file}`, { 
-                encoding: 'utf8',
-                stdio: ['pipe', 'pipe', 'ignore']
-              })
-              intf.ydoc.getMap('base-files').set(file, content)
-              log(`Loaded diff file for ${intf.name}: ${file}`)
-            } catch (error) {
-              log.error(`File not in ${diff} branch: ${file}`)
-            }
-          }
-        })
-      })
-    } catch (error) {
-      log.error('Error loading diff files:', error.message)
-    }
+const addDiffFile = ({intf, diff, file}) => {
+  try {
+    const content = execSync(`git show ${diff}:${file}`, { 
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'ignore']
+    })
+    intf.ydoc.getMap('base-files').set(file, content)
+    log(`Loaded diff file for ${intf.name}: ${file}`)
+  } catch (error) {
+    log.error(`File not in ${diff} branch: ${file}`)
   }
 }
 
@@ -141,16 +101,48 @@ const fileString = (string) => {
   return {glob, map: permissions ? map : null, permissions: permissions || map}
 }
 
-// const findMatch = (permission, patterns, file) =>
-//   patterns.filter(pattern => {
-//     const {glob, map, permissions} = fileString(pattern)
-//     if (!permissions.includes(permission)) return
-//     if (map) {
-//       return minimatch(file, map)
-//     } else {
-//       return minimatch(file, glob)
-//     }
-//   })[0]
+const debounceByKey = (func, delay) => {
+  const timers = new Map()
+  return (...args) => {
+    const key = args[0]
+    clearTimeout(timers.get(key))
+    timers.set(key, setTimeout(() => {
+      timers.delete(key)
+      func.apply(this, args)
+    }, delay))
+  }
+}
+
+const debouncedAdd = debounceByKey((path, interfaces, diff) => {
+  const content = fs.readFileSync(path, 'utf8')
+  interfaces.filter(intf => hasPermission('r', intf.files, path)).forEach(intf => {
+    log('file add', path)
+    intf.ydoc.getMap('files').set(path, content)
+    addDiffFile({intf, diff, file: path})
+  })
+}, 200)
+
+const debouncedChange = debounceByKey((path, interfaces, diff) => {
+  const fileContent = fs.readFileSync(path, 'utf8')
+  interfaces.filter(intf => hasPermission('r', intf.files, path)).forEach(intf => {
+    const content = intf.ydoc.getMap('files').get(path)
+    if (content !== fileContent) {
+      log('file change local', path)
+      intf.ydoc.getMap('files').set(path, fileContent)
+    }
+    addDiffFile({intf, diff, file: path})
+  })
+}, 300)
+
+const debouncedWriteFile = debounceByKey((key, ydoc, intf, diff) => {
+  if (!hasPermission('w', intf.files, key)) return
+  const content = ydoc.getMap('files').get(key)
+  const fileContent = fs.readFileSync(key, 'utf8')
+  if (content === fileContent) return
+  log(intf.name, 'file change remote', key)
+  fs.writeFileSync(key, content, 'utf8')
+  addDiffFile({diff, intf, file: key})
+}, 300)
 
 program.parse()
 
