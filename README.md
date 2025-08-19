@@ -37,13 +37,18 @@ ghostpipe --verbose           # Enable verbose logging
 
 ### Diff Mode
 
-Compare files between git branches:
+Compare current working directory files with a git branch:
 
 ```bash
-ghostpipe diff                    # Compare main/master with current branch
-ghostpipe diff feature-branch     # Compare main/master with feature-branch
-ghostpipe diff main develop       # Compare main with develop branch
+ghostpipe --diff              # Compare with 'main' branch (default)
+ghostpipe --diff develop      # Compare with 'develop' branch
+ghostpipe --diff feature-123  # Compare with 'feature-123' branch
 ```
+
+When diff mode is enabled, the tool will:
+- Share your current working directory files
+- Also send the base version of each file from the specified git branch
+- Allow interfaces to display diffs between the current version and the base branch version
 
 ### Configuration
 
@@ -54,13 +59,13 @@ Create a `.ghostpipe.json` file in your project root or `~/.config/ghostpipe.jso
   "signalingServer": "wss://your-signaling.com",
   "interfaces": [
     {
-      "name": "Coolify",
-      "host": "https://coolify-ghostpipe.example.com",
-      "files": [".ghostpipe/coolify.yml"]
+      "name": "OpenAPI",
+      "host": "https://swagger.ghostpipe.dev",
+      "files": [".ghostpipe/openapi.yml"]
     },
     {
       "name": "ERD",
-      "host": "https://erd-ghostpipe.example.com",
+      "host": "https://erd.ghostpipe.dev",
       "files": [".ghostpipe/erd.yml"]
     }
   ]
