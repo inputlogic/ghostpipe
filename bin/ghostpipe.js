@@ -28,6 +28,8 @@ program.action((options) => {
 const log = (...args) => VERBOSE && console.log(...args)
 log.error = (...args) => VERBOSE && console.error(...args)
 
+const WRITES = {}
+
 const connect = ({diff}) => {
   diff = diff === true ? 'main' : diff
   const options = {
@@ -69,6 +71,7 @@ const connect = ({diff}) => {
 }
 
 const addDiffFile = ({intf, diff, file}) => {
+  if (!diff) return
   try {
     const content = execSync(`git show ${diff}:${file}`, { 
       encoding: 'utf8',
@@ -126,6 +129,10 @@ const debouncedChange = debounceByKey((path, interfaces, diff) => {
   const fileContent = fs.readFileSync(path, 'utf8')
   interfaces.filter(intf => hasPermission('r', intf.files, path)).forEach(intf => {
     const content = intf.ydoc.getMap('files').get(path)
+    if (WRITES[`${intf.ydoc.guid}-${path}`]) {
+      delete WRITES[`${intf.ydoc.guid}-${path}`]
+      return
+    }
     if (content !== fileContent) {
       log('file change local', path)
       intf.ydoc.getMap('files').set(path, fileContent)
@@ -140,6 +147,7 @@ const debouncedWriteFile = debounceByKey((key, ydoc, intf, diff) => {
   const fileContent = fs.readFileSync(key, 'utf8')
   if (content === fileContent) return
   log(intf.name, 'file change remote', key)
+  WRITES[`${ydoc.guid}-${key}`] = true
   fs.writeFileSync(key, content, 'utf8')
   addDiffFile({diff, intf, file: key})
 }, 300)
