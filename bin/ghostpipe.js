@@ -11,6 +11,7 @@ const chokidar = require('chokidar')
 const { execSync } = require('child_process')
 
 const program = new Command()
+let VERBOSE = false
 
 program
   .name('ghostpipe')
@@ -20,12 +21,14 @@ program
   .option('--diff [branch]', 'Base branch for diff comparison')
 
 program.action((options) => {
+  VERBOSE = options.verbose
   connect(options)
 })
 
-const connect = ({verbose, diff}) => {
-  console.log('diff', diff)
-  const log = (...args) => verbose && console.log(...args)
+const log = (...args) => VERBOSE && console.log(...args)
+log.error = (...args) => VERBOSE && console.error(...args)
+
+const connect = ({diff}) => {
   const options = {
     signalingServer: 'wss://signaling.ghostpipe.dev'
   }
@@ -66,7 +69,7 @@ const connect = ({verbose, diff}) => {
     if (event === 'add') {
       const content = fs.readFileSync(path, 'utf8')
       interfaces.filter(intf => hasPermission('r', intf.files, path)).forEach(intf => {
-        console.log('file add', path)
+        log('file add', path)
         intf.ydoc.getMap('files').set(path, content)
       })
     }
@@ -79,7 +82,7 @@ const connect = ({verbose, diff}) => {
       interfaces.filter(intf => hasPermission('r', intf.files, path)).forEach(intf => {
         const content = intf.ydoc.getMap('files').get(path)
         if (content !== fileContent) {
-          console.log('file change local', path)
+          log('file change local', path)
           intf.ydoc.getMap('files').set(path, fileContent)
         }
       })
@@ -96,30 +99,24 @@ const connect = ({verbose, diff}) => {
         .split('\n')
         .filter(Boolean)
       
-      // For each interface, load the diff branch version of matching files
       interfaces.forEach(intf => {
         changedFiles.forEach(file => {
-          // Check if this file matches any of the interface's file patterns
           if (hasPermission('r', intf.files, file)) {
             try {
-              // Get the file content from the diff branch
               const content = execSync(`git show ${diff}:${file}`, { 
                 encoding: 'utf8',
                 stdio: ['pipe', 'pipe', 'ignore']
               })
-              
-              // Set the content in the baseFiles map
               intf.ydoc.getMap('base-files').set(file, content)
-              console.log(`Loaded diff file for ${intf.name}: ${file}`)
+              log(`Loaded diff file for ${intf.name}: ${file}`)
             } catch (error) {
-              // File might not exist in diff branch (new file)
-              console.log(`File not in ${diff} branch: ${file}`)
+              log.error(`File not in ${diff} branch: ${file}`)
             }
           }
         })
       })
     } catch (error) {
-      console.error('Error loading diff files:', error.message)
+      log.error('Error loading diff files:', error.message)
     }
   }
 }
