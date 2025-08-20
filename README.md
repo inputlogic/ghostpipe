@@ -79,6 +79,69 @@ Create a `.ghostpipe.json` file in your project root or `~/.config/ghostpipe.jso
 - `--version`: Show version information
 - `--help`: Display help information
 
+## Creating a Web Interface
+
+Here's a minimal example of how to create a web interface that connects to Ghostpipe using Y.js and WebRTC:
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Ghostpipe Interface</title>
+  <script src="https://unpkg.com/yjs@13/dist/yjs.min.js"></script>
+  <script src="https://unpkg.com/y-webrtc@10/dist/y-webrtc.min.js"></script>
+</head>
+<body>
+  <h1>Connected Files</h1>
+  <div id="files"></div>
+  
+  <script>
+    // Get connection params from URL
+    const params = new URLSearchParams(window.location.search)
+    const pipeId = params.get('pipe')
+    const signalingServer = params.get('signaling')
+    
+    if (!pipeId || !signalingServer) {
+      document.body.innerHTML = '<p>Missing connection parameters. Launch this interface from Ghostpipe CLI.</p>'
+    } else {
+      // Create Y.js document
+      const ydoc = new Y.Doc()
+      
+      // Connect via WebRTC using the signaling server
+      const provider = new WebrtcProvider(pipeId, ydoc, {
+        signaling: [signalingServer]
+      })
+      
+      // Get the shared files map
+      const files = ydoc.getMap('files')
+      
+      // Display files when they change
+      files.observe(() => {
+        const filesDiv = document.getElementById('files')
+        filesDiv.innerHTML = ''
+        
+        files.forEach((content, filepath) => {
+          const fileElement = document.createElement('div')
+          fileElement.innerHTML = `
+            <h3>${filepath}</h3>
+            <pre style="background: #f5f5f5; padding: 10px; overflow: auto;">
+${content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
+            </pre>
+          `
+          filesDiv.appendChild(fileElement)
+        })
+      })
+      
+      // Connection status
+      provider.on('synced', ({ synced }) => {
+        console.log('Connection synced:', synced)
+      })
+    }
+  </script>
+</body>
+</html>
+```
+
 ## License
 
 MIT
