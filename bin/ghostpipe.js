@@ -63,6 +63,12 @@ const connect = ({diff}) => {
   const allFilePatterns = interfaces.flatMap(intf => 
     intf.files.map(fileStr => fileString(fileStr).glob)
   )
+  if (allFilePatterns.length === 0) {
+    console.error('No file patterns configured in .ghostpipe.json')
+    console.error('Please add file patterns to the "files" array in your interfaces')
+    process.exit(1)
+  }
+  
   chokidar.watch(allFilePatterns).on('all', (event, path) => {
     if (event === 'add') {
       debouncedAdd(path, interfaces, diff)
