@@ -1,7 +1,7 @@
 {
   "name": "ghostpipe",
-  "version": "0.0.3",
-  "description": "Ghostpipe is a CLI tool that connects codebase files to user interfaces",
+  "version": "0.0.4",
+  "description": "interfaces for your codebase",
   "main": "index.js",
   "bin": {
     "ghostpipe": "./bin/ghostpipe.js"

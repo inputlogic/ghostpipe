@@ -47,7 +47,7 @@ ghostpipe --diff feature-123  # Compare with 'feature-123' branch
 
 When diff mode is enabled, the tool will:
 - Share your current working directory files
-- Also send the base version of each file from the specified git branch
+- Also send the base version of each changed file from the specified git branch
 - Allow interfaces to display diffs between the current version and the base branch version
 
 ### Configuration
