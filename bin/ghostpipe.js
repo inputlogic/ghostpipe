@@ -60,7 +60,10 @@ const connect = ({diff}) => {
       provider
     }
   })
-  chokidar.watch('.').on('all', (event, path) => {
+  const allFilePatterns = interfaces.flatMap(intf => 
+    intf.files.map(fileStr => fileString(fileStr).glob)
+  )
+  chokidar.watch(allFilePatterns).on('all', (event, path) => {
     if (event === 'add') {
       debouncedAdd(path, interfaces, diff)
     }
