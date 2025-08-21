@@ -82,6 +82,11 @@ const connect = ({diff}) => {
     ignoreInitial: false
   })
   
+  watcher.on('error', error => {
+    console.error('ERROR:', error.message)
+    process.exit(1)
+  })
+  
   watcher.on('all', (event, path) => {
     if (event === 'add') {
       debouncedAdd(path, interfaces, diff)
