@@ -17,12 +17,14 @@ program
   .name('ghostpipe')
   .description('Interfaces for your codebase')
   .version(require('../package.json').version)
+  .argument('[url]', 'Interface URL')
+  .argument('[filePatterns...]', 'File patterns with permissions (e.g., "*.yml r")')
   .option('--verbose', 'Enable verbose logging')
   .option('--diff [branch]', 'Base branch for diff comparison')
 
-program.action((options) => {
+program.action((url, filePatterns, options) => {
   VERBOSE = options.verbose
-  connect(options)
+  connect(url, filePatterns, options)
 })
 
 const log = (...args) => VERBOSE && console.log(...args)
@@ -30,12 +32,16 @@ log.error = (...args) => VERBOSE && console.error(...args)
 
 const WRITES = {}
 
-const connect = ({diff}) => {
+const connect = (url, filePatterns, {diff}) => {
   diff = diff === true ? 'main' : diff
   const options = {
     signalingServer: DEFAULT_SIGNALING_SERVER
   }
-  const config = readJson('.ghostpipe.json')
+  if (url && (!filePatterns || !filePatterns.length)) {
+    console.error('No interface specified. either provide URL and file patterns or create .ghostpipe.json')
+    process.exit(1)
+  }
+  const config = url ? {interfaces: [{host: url, files: filePatterns, name: 'interface'}]} : readJson('.ghostpipe.json')
   const interfaces = config.interfaces.map(intf => {
     const pipe = crypto.randomBytes(16).toString('hex')
     const params = new URLSearchParams({
