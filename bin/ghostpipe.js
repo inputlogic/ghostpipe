@@ -69,7 +69,20 @@ const connect = ({diff}) => {
     process.exit(1)
   }
   
-  chokidar.watch(allFilePatterns).on('all', (event, path) => {
+  const chokidarPatterns = allFilePatterns.map(pattern => {
+    if (pattern.includes('**')) {
+      return pattern.replace('/**', '')
+    }
+    return pattern
+  })
+  
+  const watcher = chokidar.watch(chokidarPatterns, {
+    ignored: /(^|[\/\\])\../, // ignore dotfiles
+    persistent: true,
+    ignoreInitial: false
+  })
+  
+  watcher.on('all', (event, path) => {
     if (event === 'add') {
       debouncedAdd(path, interfaces, diff)
     }
