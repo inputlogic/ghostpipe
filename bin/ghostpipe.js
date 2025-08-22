@@ -77,7 +77,7 @@ const connect = ({diff}) => {
   })
   
   const watcher = chokidar.watch(chokidarPatterns, {
-    ignored: /(^|[\/\\])\../, // ignore dotfiles
+    ignored: [/(^|[\/\\])\../, '!.ghostpipe.json'], // ignore dotfiles except for .ghostpipe.json
     persistent: true,
     ignoreInitial: false
   })
