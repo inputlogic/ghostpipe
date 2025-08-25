@@ -66,7 +66,34 @@ const connect = (url, filePatterns, {diff}) => {
       provider
     }
   })
-  chokidar.watch('.').on('all', (event, path) => {
+  const allFilePatterns = interfaces.flatMap(intf => 
+    intf.files.map(fileStr => fileString(fileStr).glob)
+  )
+  if (allFilePatterns.length === 0) {
+    console.error('No file patterns configured in .ghostpipe.json')
+    console.error('Please add file patterns to the "files" array in your interfaces')
+    process.exit(1)
+  }
+  
+  const chokidarPatterns = allFilePatterns.map(pattern => {
+    if (pattern.includes('**')) {
+      return pattern.replace('/**', '')
+    }
+    return pattern
+  })
+  
+  const watcher = chokidar.watch(chokidarPatterns, {
+    ignored: [/(^|[\/\\])\../, '!.ghostpipe.json'], // ignore dotfiles except for .ghostpipe.json
+    persistent: true,
+    ignoreInitial: false
+  })
+  
+  watcher.on('error', error => {
+    console.error('ERROR:', error.message)
+    process.exit(1)
+  })
+  
+  watcher.on('all', (event, path) => {
     if (event === 'add') {
       debouncedAdd(path, interfaces, diff)
     }
