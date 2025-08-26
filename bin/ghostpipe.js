@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-const WebSocket = require('ws');
-global.WebSocket = WebSocket;
-const crypto = require('crypto');
+const WebSocket = require('ws')
+global.WebSocket = WebSocket
+const crypto = require('crypto')
 const { Command } = require('commander')
 const { Doc: YDoc } = require('yjs')
 const { WebrtcProvider } = require('y-webrtc')
@@ -31,8 +31,9 @@ program.action((url, filePatterns, options) => {
 
 const log = (...args) => VERBOSE && console.log(...args)
 log.error = (...args) => VERBOSE && console.error(...args)
+log.warn = (...args) => VERBOSE && console.warn(...args)
 
-const WRITES = {}
+const WRITTEN_HASHES = new Map()
 
 const connect = (url, filePatterns, {diff}) => {
   diff = diff === true ? 'main' : diff
@@ -52,9 +53,15 @@ const connect = (url, filePatterns, {diff}) => {
     })
     const ydoc = new YDoc()
     const provider = new WebrtcProvider(pipe, ydoc, {signaling: [options.signalingServer], peerOpts: { wrtc }})
-    ydoc.getMap('files').observe(event => {
+    const meta = ydoc.getMap('meta')
+    meta.set('base-branch', diff)
+    meta.set('head-branch', getHeadBranch())
+    ydoc.getMap('files').observe((event, transaction) => {
+      log(intf.name, 'transaction origin:', transaction.origin?.peerId || 'local')
+      if (!transaction.origin?.peerId) return
       event.changes.keys.forEach((change, key) => {
         if (change.action === 'update' || change.action === 'add') {
+          log(intf.name, 'ydoc event', change.action, key)
           debouncedWriteFile(key, ydoc, intf, diff)
         } else if (change.action === 'delete') {
           log('TODO: handle delete file')
@@ -68,6 +75,7 @@ const connect = (url, filePatterns, {diff}) => {
       provider
     }
   })
+  console.log(' ')
   const allFilePatterns = interfaces.flatMap(intf => 
     intf.files.map(fileStr => fileString(fileStr).glob)
   )
@@ -155,37 +163,58 @@ const debouncedAdd = debounceByKey((path, interfaces, diff) => {
   const content = fs.readFileSync(path, 'utf8')
   interfaces.filter(intf => hasPermission('r', intf.files, path)).forEach(intf => {
     log('file add', path)
-    intf.ydoc.getMap('files').set(path, content)
+    intf.ydoc.transact(() => {
+      intf.ydoc.getMap('files').set(path, content)
+    })
     addDiffFile({intf, diff, file: path})
   })
-}, 200)
+}, 300)
 
 const debouncedChange = debounceByKey((path, interfaces, diff) => {
   const fileContent = fs.readFileSync(path, 'utf8')
+  const currentHash = hashContent(fileContent)
+  
   interfaces.filter(intf => hasPermission('r', intf.files, path)).forEach(intf => {
     const content = intf.ydoc.getMap('files').get(path)
-    if (WRITES[`${intf.ydoc.guid}-${path}`]) {
-      delete WRITES[`${intf.ydoc.guid}-${path}`]
+    const writtenHash = WRITTEN_HASHES.get(`${intf.ydoc.guid}-${path}`)
+    if (writtenHash === currentHash) {
+      WRITTEN_HASHES.delete(`${intf.ydoc.guid}-${path}`)
       return
     }
     if (content !== fileContent) {
       log('file change local', path)
-      intf.ydoc.getMap('files').set(path, fileContent)
+      intf.ydoc.transact(() => {
+        intf.ydoc.getMap('files').set(path, fileContent)
+      })
     }
     addDiffFile({intf, diff, file: path})
   })
 }, 300)
 
 const debouncedWriteFile = debounceByKey((key, ydoc, intf, diff) => {
-  if (!hasPermission('w', intf.files, key)) return
+  if (!hasPermission('w', intf.files, key)) {
+    log.warn('No permission to write file', key)
+    return
+  }
   const content = ydoc.getMap('files').get(key)
   const fileContent = fs.readFileSync(key, 'utf8')
   if (content === fileContent) return
   log(intf.name, 'file change remote', key)
-  WRITES[`${ydoc.guid}-${key}`] = true
+  WRITTEN_HASHES.set(`${ydoc.guid}-${key}`, hashContent(content))
   fs.writeFileSync(key, content, 'utf8')
   addDiffFile({diff, intf, file: key})
 }, 300)
 
-program.parse()
+const getHeadBranch = () => {
+  try {
+    return execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8' }).trim()
+  } catch (error) {
+    log.error('Error getting branch:', error.message)
+  }
+}
 
+const hashContent = (content) =>
+  crypto.createHash('sha256').update(content).digest('hex')
+
+
+program.parse()
