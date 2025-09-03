@@ -2,6 +2,22 @@
 
 A CLI tool to connect codebase files to user interfaces.
 
+## Quickstart (Excalidraw demo)
+
+```bash
+npm install -g ghostpipe
+```
+
+```bash
+mkdir ghostpipe-quickstart && cd ghostpipe-quickstart
+```
+
+```bash
+ghostpipe https://excalidraw.ghostpipe.dev
+```
+
+Open the link and draw something. The drawing will be saved in `ghostpipe-quickstart/.ghostpipe/excalidraw.ghostpipe.dev.txt`.
+
 ## Local development
 
 - clone the repo
