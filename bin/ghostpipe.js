@@ -50,7 +50,7 @@ const main = async (url, file, {diff}) => {
   const config = await buildConfig({url, file, diff})
     .then(validateConfig)
     .then(yjsConnect)
-  watchLocalFiles(config)
+  localConnect(config)
   config.interfaces.forEach(printInterface)
   console.log(' ')
 }
@@ -86,6 +86,8 @@ const yjsConnect = config => ({
   interfaces: config.interfaces.map(intf => connectInterfaceToYjs(intf, config))
 })
 
+const localConnect = config => config.interfaces.forEach(intf => watchLocalFile(intf, config))
+
 const connectInterfaceToYjs = (intf, config) => {
   const pipe = crypto.randomBytes(16).toString('hex')
   const params = new URLSearchParams({pipe, signaling: config.signalingServer})
@@ -116,22 +118,13 @@ const connectInterfaceToYjs = (intf, config) => {
   }
 }
 
-const watchLocalFiles = config => {
-  const allFilePatterns = config.interfaces.map(intf => intf.file)
-  if (allFilePatterns.length === 0) {
-    console.error(chalk.red('No file patterns configured in .ghostpipe.json'))
-    console.error(chalk.yellow('Please add file patterns to the "files" array in your interfaces'))
+const watchLocalFile = (intf, config) => {
+  if (!intf.file) {
+    console.error(chalk.red(`No file specified for ${intf.name}`))
     process.exit(1)
   }
   
-  const chokidarPatterns = allFilePatterns.map(pattern => {
-    if (pattern.includes('**')) {
-      return pattern.replace('/**', '')
-    }
-    return pattern
-  })
-  
-  const watcher = chokidar.watch(chokidarPatterns, {
+  const watcher = chokidar.watch([intf.file], {
     persistent: true,
     ignoreInitial: false
   })
@@ -143,13 +136,48 @@ const watchLocalFiles = config => {
   
   watcher.on('all', (event, path) => {
     if (event === 'add') {
-      debouncedAdd(path, config.interfaces, config.diff)
+      debouncedAdd(path, intf, config.diff)
     }
     if (event === 'change') {
-      debouncedChange(path, config.interfaces, config.diff)
+      debouncedChange(path, intf, config.diff)
     }
   })
 }
+
+// const watchLocalFiles = config => {
+//   const allFilePatterns = config.interfaces.map(intf => intf.file)
+//   if (allFilePatterns.length === 0) {
+//     console.error(chalk.red('No file patterns configured in .ghostpipe.json'))
+//     console.error(chalk.yellow('Please add file patterns to the "files" array in your interfaces'))
+//     process.exit(1)
+//   }
+  
+//   const chokidarPatterns = allFilePatterns.map(pattern => {
+//     if (pattern.includes('**')) {
+//       return pattern.replace('/**', '')
+//     }
+//     return pattern
+//   })
+  
+//   const watcher = chokidar.watch(chokidarPatterns, {
+//     persistent: true,
+//     ignoreInitial: false
+//   })
+  
+//   watcher.on('error', error => {
+//     console.error(chalk.red('ERROR:'), chalk.red(error.message))
+//     process.exit(1)
+//   })
+  
+//   watcher.on('all', (event, path) => {
+//     if (event === 'add') {
+//       debouncedAdd(path, config.interfaces, config.diff)
+//     }
+//     if (event === 'change') {
+//       debouncedChange(path, config.interfaces, config.diff)
+//     }
+//   })
+// }
 
 const printInterface = intf =>
   console.log(chalk.cyan(`${intf.name}: `) + chalk.underline(intf.url))
@@ -225,30 +253,24 @@ const debounceByKey = (func, delay) => {
   }
 }
 
-const debouncedAdd = debounceByKey((path, interfaces, diff) => {
+const debouncedAdd = debounceByKey((path, intf, diff) => {
   const content = fs.readFileSync(path, 'utf8')
-  interfaces.filter(intf => intf.file === path).forEach(intf => {
-    log('file add', path)
-    intf.ydoc.transact(() => {
-      intf.ydoc.getMap('data').set('content', content)
-    })
-    addDiffFile({intf, diff, file: path})
+  intf.ydoc.transact(() => {
+    intf.ydoc.getMap('data').set('content', content)
   })
+  addDiffFile({intf, diff, file: path})
 }, 300)
 
-const debouncedChange = debounceByKey((path, interfaces, diff) => {
+const debouncedChange = debounceByKey((path, intf, diff) => {
   const fileContent = fs.readFileSync(path, 'utf8')
-  
-  interfaces.filter(intf => intf.file === path).forEach(intf => {
-    const content = intf.ydoc.getMap('data').get('content')
-    if (content !== fileContent) {
-      log('file change local', path)
-      intf.ydoc.transact(() => {
-        intf.ydoc.getMap('data').set('content', fileContent)
-      })
-    }
-    addDiffFile({intf, diff, file: path})
-  })
+  const content = intf.ydoc.getMap('data').get('content')
+  if (content !== fileContent) {
+    log('file change local', path)
+    intf.ydoc.transact(() => {
+      intf.ydoc.getMap('data').set('content', fileContent)
+    })
+  }
+  addDiffFile({intf, diff, file: path})
 }, 300)
 
 const debouncedWriteFile = debounceByKey((key, ydoc, intf, diff) => {
