@@ -2,6 +2,22 @@
 
 A CLI tool to connect codebase files to user interfaces.
 
+## Quickstart (Excalidraw demo)
+
+```bash
+npm install -g ghostpipe
+```
+
+```bash
+mkdir ghostpipe-quickstart && cd ghostpipe-quickstart
+```
+
+```bash
+ghostpipe https://excalidraw.ghostpipe.dev
+```
+
+Open the link and draw something. The drawing will be saved in `excalidraw.ghostpipe.dev.txt`.
+
 ## Local development
 
 - clone the repo
@@ -11,7 +27,7 @@ A CLI tool to connect codebase files to user interfaces.
 
 ## How it works
 
-When you run `ghostpipe` in a project, it will look for a .ghostpipe.json file that lists the interfaces you are using.
+When you run `ghostpipe` in a project, it will look for a ghostpipe.config.json file that lists the interfaces you are using.
 The CLI tool will then list a url for each interface. Each url includes `pipe` and `signaling` query params. The interfaces will use these 2 query params to connect to the local repo using yjs and webrtc. See use-ghostpipe.js for a nextjs example hook.
 
 ## Installation

@@ -1,6 +1,6 @@
 {
   "name": "ghostpipe",
-  "version": "0.0.5",
+  "version": "0.1.0",
   "description": "interfaces for your codebase",
   "main": "index.js",
   "bin": {
@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@roamhq/wrtc": "^0.9.0",
+    "chalk": "^4.1.2",
     "chokidar": "^4.0.3",
     "commander": "^14.0.0",
     "minimatch": "^10.0.3",
