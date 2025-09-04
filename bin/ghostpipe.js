@@ -13,8 +13,10 @@ const { execSync } = require('child_process')
 const chalk = require('chalk')
 
 const program = new Command()
+const DEFAULT_GLOBAL_CONFIG_PATH = '~/.config/ghostpipe/config.json'
 const DEFAULT_SIGNALING_SERVER = 'wss://signaling.ghostpipe.dev'
-const DEFAULT_CONFIG_FILE_PATH = 'ghostpipe.config.json'
+const DEFAULT_LOCAL_CONFIG_PATH = 'ghostpipe.config.json'
+const DEFAULT_DIFF_BASE_BRANCH = 'main'
 let VERBOSE = false
 
 const isGitRepo = (() => {
@@ -35,107 +37,87 @@ program
   .option('--verbose', 'Enable verbose logging')
   .option('--diff [branch]', 'Base branch for diff comparison')
 
-program.action(async (url, filePatterns, options) => {
+program.action(async (url, file, options) => {
   VERBOSE = options.verbose
-  await connect(url, filePatterns, options)
+  await main(url, file, options)
 })
 
 const log = (...args) => VERBOSE && console.log(chalk.gray(...args))
 log.error = (...args) => VERBOSE && console.error(chalk.red(...args))
 log.warn = (...args) => VERBOSE && console.warn(chalk.yellow(...args))
 
-const connect = async (url, file, {diff}) => {
-  diff = diff === true ? 'main' : diff
-  if (diff && !isGitRepo) {
+const main = async (url, file, {diff}) => {
+  const config = await buildConfig({url, file, diff})
+    .then(validateConfig)
+    .then(yjsConnect)
+  watchLocalFiles(config)
+  config.interfaces.forEach(printInterface)
+  console.log(' ')
+}
+
+const buildConfig = async ({url, file, diff}) => {
+  const globalConfig = readJson(DEFAULT_GLOBAL_CONFIG_PATH)
+  const localConfig = readJson(globalConfig?.localConfigPath || DEFAULT_LOCAL_CONFIG_PATH)
+  const inlineInterface = await prepareInlineInterface({url, file})
+  return {
+    diff: diff === true ? (localConfig?.diffBaseBranch || globalConfig?.diffBaseBranch || DEFAULT_DIFF_BASE_BRANCH) : diff,
+    isGitRepo,
+    signalingServer: DEFAULT_SIGNALING_SERVER,
+    localConfig,
+    globalConfig,
+    interfaces: inlineInterface ? [inlineInterface] : localConfig?.interfaces
+  }
+}
+
+const validateConfig = config => {
+  if (config.diff && !config.isGitRepo) {
     console.warn(chalk.yellow('Warning: --diff flag specified but current directory is not a git repository'))
-    diff = null
+    process.exit(0)
   }
-  const options = {
-    signalingServer: DEFAULT_SIGNALING_SERVER
-  }
-
-  if (file) {
-    if (!fs.existsSync(path.dirname(file))) {
-      fs.mkdirSync(dir, { recursive: true })
-      console.log(chalk.green(`✓ Created directory: ${dir}`))
-    }
-    if (!fs.existsSync(file)) {
-      fs.writeFileSync(file, '', 'utf8')
-      console.log(chalk.green(`✓ Created file: ${file}`))
-    }
-  }
-
-  if (url && !file) {
-    const hostname = url.replace(/^https?:\/\//, '').replace(/[^a-zA-Z0-9.-]/g, '_')
-    const defaultPath = `${hostname}.txt`
-    
-    if (fs.existsSync(defaultPath)) {
-      log(chalk.blue(`Using existing file: ${defaultPath}`))
-      file = defaultPath
-    } else {
-      log(`No existing file, creating it`)
-      const defaultFilePath = await promptForDefaultFile(defaultPath)
-      
-      if (!defaultFilePath) {
-        console.error(chalk.red('\nExiting without creating interface.'))
-        process.exit(0)
-      }
-      
-      const dir = path.dirname(defaultFilePath)
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true })
-        console.log(chalk.green(`✓ Created directory: ${dir}`))
-      }
-      
-      if (!fs.existsSync(defaultFilePath)) {
-        fs.writeFileSync(defaultFilePath, '', 'utf8')
-        console.log(chalk.green(`✓ Created file: ${defaultFilePath}`))
-      }
-      
-      file = defaultFilePath
-      console.log()
-    }
-  }
-  
-  const config = url ? {interfaces: [{host: url, file, name: 'interface'}]} : readJson(DEFAULT_CONFIG_FILE_PATH)
-  if (!config) {
+  if (!config.interfaces) {
     console.log('No url or config found. See https://github.com/inputlogic/ghostpipe#quick-start for a quickstart guide')
     process.exit(0)
   }
-  const interfaces = config.interfaces.map(intf => {
-    const pipe = crypto.randomBytes(16).toString('hex')
-    const params = new URLSearchParams({
-      pipe,
-      signaling: options.signalingServer
+  return config
+}
+
+const yjsConnect = config => ({
+  ...config,
+  interfaces: config.interfaces.map(intf => connectInterfaceToYjs(intf, config))
+})
+
+const connectInterfaceToYjs = (intf, config) => {
+  const pipe = crypto.randomBytes(16).toString('hex')
+  const params = new URLSearchParams({pipe, signaling: config.signalingServer})
+  const ydoc = new YDoc()
+  const provider = new WebrtcProvider(pipe, ydoc, {signaling: [config.signalingServer], peerOpts: { wrtc }})
+  const meta = ydoc.getMap('meta')
+  if (config.isGitRepo) {
+    meta.set('base-branch', config.diff)
+    meta.set('head-branch', getHeadBranch())
+  }
+  ydoc.getMap('data').observe((event, transaction) => {
+    log(intf.name, 'transaction origin:', transaction.origin?.peerId || 'local')
+    if (!transaction.origin?.peerId) return
+    event.changes.keys.forEach((change, key) => {
+      if (change.action === 'update' || change.action === 'add') {
+        log(intf.name, 'ydoc event', change.action, key)
+        debouncedWriteFile(intf.file, ydoc, intf, config.diff)
+      } else if (change.action === 'delete') {
+        log('TODO: handle delete file')
+      }
     })
-    const ydoc = new YDoc()
-    const provider = new WebrtcProvider(pipe, ydoc, {signaling: [options.signalingServer], peerOpts: { wrtc }})
-    const meta = ydoc.getMap('meta')
-    if (isGitRepo) {
-      meta.set('base-branch', diff)
-      meta.set('head-branch', getHeadBranch())
-    }
-    ydoc.getMap('data').observe((event, transaction) => {
-      log(intf.name, 'transaction origin:', transaction.origin?.peerId || 'local')
-      if (!transaction.origin?.peerId) return
-      event.changes.keys.forEach((change, key) => {
-        if (change.action === 'update' || change.action === 'add') {
-          log(intf.name, 'ydoc event', change.action, key)
-          debouncedWriteFile(intf.file, ydoc, intf, diff)
-        } else if (change.action === 'delete') {
-          log('TODO: handle delete file')
-        }
-      })
-    })
-    console.log(chalk.cyan(`${intf.name}: `) + chalk.underline(`${intf.host}?${params.toString()}`))
-    return {
-      ...intf,
-      ydoc,
-      provider
-    }
   })
-  console.log(' ')
-  const allFilePatterns = interfaces.map(intf => intf.file)
+  return {
+    ...intf,
+    url: `${intf.host}?${params.toString()}`,
+    ydoc,
+    provider
+  }
+}
+
+const watchLocalFiles = config => {
+  const allFilePatterns = config.interfaces.map(intf => intf.file)
   if (allFilePatterns.length === 0) {
     console.error(chalk.red('No file patterns configured in .ghostpipe.json'))
     console.error(chalk.yellow('Please add file patterns to the "files" array in your interfaces'))
@@ -161,15 +143,43 @@ const connect = async (url, file, {diff}) => {
   
   watcher.on('all', (event, path) => {
     if (event === 'add') {
-      debouncedAdd(path, interfaces, diff)
+      debouncedAdd(path, config.interfaces, config.diff)
     }
     if (event === 'change') {
-      debouncedChange(path, interfaces, diff)
+      debouncedChange(path, config.interfaces, config.diff)
     }
   })
 }
 
-const promptForDefaultFile = async (defaultPath) => {
+const printInterface = intf =>
+  console.log(chalk.cyan(`${intf.name}: `) + chalk.underline(intf.url))
+
+const prepareInlineInterface = async ({url, file}) => {
+  if (!url) return null
+  if (!file) {
+    file = await getFilePath(`${url.replace(/^https?:\/\//, '').replace(/[^a-zA-Z0-9.-]/g, '_')}.txt`)
+  }
+  createFileIfDoesNotExist(file)
+  return {
+    host: url,
+    file,
+    name: 'interface'
+  }
+}
+
+const createFileIfDoesNotExist = file => {
+  if (!fs.existsSync(path.dirname(file))) {
+    fs.mkdirSync(dir, { recursive: true })
+  }
+  if (!fs.existsSync(file)) {
+    fs.writeFileSync(file, '', 'utf8')
+  }
+}
+
+const getFilePath = async (defaultPath) => {
+  if (fs.existsSync(defaultPath))
+    return defaultPath
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
@@ -258,9 +268,5 @@ const getHeadBranch = () => {
     log.error('Error getting branch:', error.message)
   }
 }
-
-const hashContent = (content) =>
-  crypto.createHash('sha256').update(content).digest('hex')
-
 
 program.parse()
