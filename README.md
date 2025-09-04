@@ -16,7 +16,7 @@ mkdir ghostpipe-quickstart && cd ghostpipe-quickstart
 ghostpipe https://excalidraw.ghostpipe.dev
 ```
 
-Open the link and draw something. The drawing will be saved in `ghostpipe-quickstart/.ghostpipe/excalidraw.ghostpipe.dev.txt`.
+Open the link and draw something. The drawing will be saved in `excalidraw.ghostpipe.dev.txt`.
 
 ## Local development
 
@@ -27,7 +27,7 @@ Open the link and draw something. The drawing will be saved in `ghostpipe-quicks
 
 ## How it works
 
-When you run `ghostpipe` in a project, it will look for a .ghostpipe.json file that lists the interfaces you are using.
+When you run `ghostpipe` in a project, it will look for a ghostpipe.config.json file that lists the interfaces you are using.
 The CLI tool will then list a url for each interface. Each url includes `pipe` and `signaling` query params. The interfaces will use these 2 query params to connect to the local repo using yjs and webrtc. See use-ghostpipe.js for a nextjs example hook.
 
 ## Installation
