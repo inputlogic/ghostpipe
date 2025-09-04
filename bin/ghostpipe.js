@@ -57,7 +57,7 @@ const buildConfig = async ({url, file, diff}) => {
     ...DEFAULT_CONFIG,
     ...globalConfig,
     ...localConfig,
-    diff: diff === true ? (localConfig?.diffBaseBranch || globalConfig?.diffBaseBranch || DEFAULT_CONFIG.defaultDiffBaseBranch) : diff,
+    diff: diff === true ? (localConfig?.defaultDiffBaseBranch || globalConfig?.defaultDiffBaseBranch || DEFAULT_CONFIG.defaultDiffBaseBranch) : diff,
     isGitRepo: isGitRepo(),
     interfaces: inlineInterface ? [inlineInterface] : localConfig?.interfaces
   }
@@ -74,7 +74,11 @@ const validateConfig = config => {
   }
   config.interfaces.forEach(intf => {
     if (!intf.file) {
-      console.error(chalk.red(`No file specified for ${intf.name}`))
+      console.error(chalk.red(`No file specified for interface ${intf.name} (${intf.host})`))
+      process.exit(1)
+    }
+    if (!fs.existsSync(intf.file)) {
+      console.error(chalk.red(`File does not exist for interface ${intf.name}: ${intf.file}`))
       process.exit(1)
     }
   })
