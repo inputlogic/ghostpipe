@@ -3,7 +3,6 @@ const crypto = require('crypto')
 const { Command } = require('commander')
 const { Doc: YDoc } = require('yjs')
 const { WebrtcProvider } = require('y-webrtc')
-const { minimatch } = require('minimatch')
 const wrtc = require('@roamhq/wrtc')
 const fs = require('fs')
 const path = require('path')
@@ -13,20 +12,17 @@ const { execSync } = require('child_process')
 const chalk = require('chalk')
 
 const program = new Command()
-const DEFAULT_GLOBAL_CONFIG_PATH = '~/.config/ghostpipe/config.json'
-const DEFAULT_SIGNALING_SERVER = 'wss://signaling.ghostpipe.dev'
-const DEFAULT_LOCAL_CONFIG_PATH = 'ghostpipe.config.json'
-const DEFAULT_DIFF_BASE_BRANCH = 'main'
+const DEFAULT_CONFIG = {
+  signalingServer: 'wss://signaling.ghostpipe.dev',
+  globalConfigPath: '~/.config/ghostpipe/config.json',
+  localConfigPath: 'ghostpipe.config.json',
+  defaultDiffBaseBranch: 'main',
+}
+// const DEFAULT_GLOBAL_CONFIG_PATH = '~/.config/ghostpipe/config.json'
+// const DEFAULT_SIGNALING_SERVER = 'wss://signaling.ghostpipe.dev'
+// const DEFAULT_LOCAL_CONFIG_PATH = 'ghostpipe.config.json'
+// const DEFAULT_DIFF_BASE_BRANCH = 'main'
 let VERBOSE = false
-
-const isGitRepo = (() => {
-  try {
-    execSync('git rev-parse --git-dir', { encoding: 'utf8', stdio: 'pipe' })
-    return true
-  } catch {
-    return false
-  }
-})()
 
 program
   .name('ghostpipe')
@@ -47,24 +43,26 @@ log.error = (...args) => VERBOSE && console.error(chalk.red(...args))
 log.warn = (...args) => VERBOSE && console.warn(chalk.yellow(...args))
 
 const main = async (url, file, {diff}) => {
-  const config = await buildConfig({url, file, diff})
-    .then(validateConfig)
-    .then(yjsConnect)
-  localConnect(config)
-  config.interfaces.forEach(printInterface)
-  console.log(' ')
+  const config = await asyncPipe(
+    buildConfig,
+    validateConfig,
+    connectInterfaces
+  )({url, file, diff})
+  config.interfaces.forEach(
+    intf => console.log(chalk.cyan(`${intf.name}: `) + chalk.underline(intf.url))
+  )
 }
 
 const buildConfig = async ({url, file, diff}) => {
-  const globalConfig = readJson(DEFAULT_GLOBAL_CONFIG_PATH)
-  const localConfig = readJson(globalConfig?.localConfigPath || DEFAULT_LOCAL_CONFIG_PATH)
+  const globalConfig = readJson(DEFAULT_CONFIG.globalConfigPath)
+  const localConfig = readJson(globalConfig?.localConfigPath || DEFAULT_CONFIG.localConfigPath)
   const inlineInterface = await prepareInlineInterface({url, file})
   return {
-    diff: diff === true ? (localConfig?.diffBaseBranch || globalConfig?.diffBaseBranch || DEFAULT_DIFF_BASE_BRANCH) : diff,
+    ...DEFAULT_CONFIG,
+    ...globalConfig,
+    ...localConfig,
+    diff: diff === true ? (localConfig?.diffBaseBranch || globalConfig?.diffBaseBranch || DEFAULT_CONFIG.defaultDiffBaseBranch) : diff,
     isGitRepo,
-    signalingServer: DEFAULT_SIGNALING_SERVER,
-    localConfig,
-    globalConfig,
     interfaces: inlineInterface ? [inlineInterface] : localConfig?.interfaces
   }
 }
@@ -81,12 +79,16 @@ const validateConfig = config => {
   return config
 }
 
-const yjsConnect = config => ({
+const connectInterfaces = config => ({
   ...config,
-  interfaces: config.interfaces.map(intf => connectInterfaceToYjs(intf, config))
+  interfaces: config.interfaces.map(intf => connectInterface(intf, config))
 })
 
-const localConnect = config => config.interfaces.forEach(intf => watchLocalFile(intf, config))
+const connectInterface = (intf, config) =>
+  pipe(
+    intf => connectInterfaceToYjs(intf, config),
+    intf => watchLocalFile(intf, config),
+  )(intf)
 
 const connectInterfaceToYjs = (intf, config) => {
   const pipe = crypto.randomBytes(16).toString('hex')
@@ -142,45 +144,9 @@ const watchLocalFile = (intf, config) => {
       debouncedChange(path, intf, config.diff)
     }
   })
+
+  return intf
 }
-
-// const watchLocalFiles = config => {
-//   const allFilePatterns = config.interfaces.map(intf => intf.file)
-//   if (allFilePatterns.length === 0) {
-//     console.error(chalk.red('No file patterns configured in .ghostpipe.json'))
-//     console.error(chalk.yellow('Please add file patterns to the "files" array in your interfaces'))
-//     process.exit(1)
-//   }
-  
-//   const chokidarPatterns = allFilePatterns.map(pattern => {
-//     if (pattern.includes('**')) {
-//       return pattern.replace('/**', '')
-//     }
-//     return pattern
-//   })
-  
-//   const watcher = chokidar.watch(chokidarPatterns, {
-//     persistent: true,
-//     ignoreInitial: false
-//   })
-  
-//   watcher.on('error', error => {
-//     console.error(chalk.red('ERROR:'), chalk.red(error.message))
-//     process.exit(1)
-//   })
-  
-//   watcher.on('all', (event, path) => {
-//     if (event === 'add') {
-//       debouncedAdd(path, config.interfaces, config.diff)
-//     }
-//     if (event === 'change') {
-//       debouncedChange(path, config.interfaces, config.diff)
-//     }
-//   })
-// }
-
-const printInterface = intf =>
-  console.log(chalk.cyan(`${intf.name}: `) + chalk.underline(intf.url))
 
 const prepareInlineInterface = async ({url, file}) => {
   if (!url) return null
@@ -289,6 +255,26 @@ const getHeadBranch = () => {
   } catch (error) {
     log.error('Error getting branch:', error.message)
   }
+}
+
+const pipe = (...functions) => (value) => 
+  functions.reduce((acc, fn) => fn(acc), value)
+
+const isGitRepo = (() => {
+  try {
+    execSync('git rev-parse --git-dir', { encoding: 'utf8', stdio: 'pipe' })
+    return true
+  } catch {
+    return false
+  }
+})()
+
+const asyncPipe = (...functions) => async (value) => {
+  let result = value
+  for (const fn of functions) {
+    result = await fn(result)
+  }
+  return result
 }
 
 program.parse()
