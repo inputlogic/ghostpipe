@@ -14,7 +14,7 @@ const chalk = require('chalk')
 const program = new Command()
 const DEFAULT_CONFIG = {
   signalingServer: 'wss://signaling.ghostpipe.dev',
-  globalConfigPath: '~/.config/ghostpipe/config.json',
+  globalConfigPath: path.join(require('os').homedir(), '.config', 'ghostpipe', 'config.json'),
   localConfigPath: 'ghostpipe.config.json',
   defaultDiffBaseBranch: 'main',
 }
@@ -58,7 +58,7 @@ const buildConfig = async ({url, file, diff}) => {
     ...globalConfig,
     ...localConfig,
     diff: diff === true ? (localConfig?.diffBaseBranch || globalConfig?.diffBaseBranch || DEFAULT_CONFIG.defaultDiffBaseBranch) : diff,
-    isGitRepo,
+    isGitRepo: isGitRepo(),
     interfaces: inlineInterface ? [inlineInterface] : localConfig?.interfaces
   }
 }
@@ -160,7 +160,7 @@ const prepareInlineInterface = async ({url, file}) => {
 
 const createFileIfDoesNotExist = file => {
   if (!fs.existsSync(path.dirname(file))) {
-    fs.mkdirSync(dir, { recursive: true })
+    fs.mkdirSync(path.dirname(file), { recursive: true })
   }
   if (!fs.existsSync(file)) {
     fs.writeFileSync(file, '', 'utf8')
@@ -184,8 +184,17 @@ const getFilePath = async (defaultPath) => {
   })
 }
 
+const isGitRepo = () => {
+  try {
+    execSync('git rev-parse --git-dir', { encoding: 'utf8', stdio: 'pipe' })
+    return true
+  } catch {
+    return false
+  }
+}
+
 const addDiffFile = ({intf, diff, file}) => {
-  if (!diff || !isGitRepo) return
+  if (!diff || !isGitRepo()) return
   try {
     const content = execSync(`git show ${diff}:${file}`, {encoding: 'utf8', stdio: 'pipe'})
     intf.ydoc.getMap('base-data').set('content', content)
@@ -246,7 +255,7 @@ const debouncedWriteFile = debounceByKey((key, ydoc, intf, diff) => {
 }, 300)
 
 const getHeadBranch = () => {
-  if (!isGitRepo) return null
+  if (!isGitRepo()) return null
   try {
     return execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8', stdio: 'pipe' }).trim()
   } catch (error) {
@@ -256,15 +265,6 @@ const getHeadBranch = () => {
 
 const pipe = (...functions) => (value) => 
   functions.reduce((acc, fn) => fn(acc), value)
-
-const isGitRepo = (() => {
-  try {
-    execSync('git rev-parse --git-dir', { encoding: 'utf8', stdio: 'pipe' })
-    return true
-  } catch {
-    return false
-  }
-})()
 
 const asyncPipe = (...functions) => async (value) => {
   let result = value
