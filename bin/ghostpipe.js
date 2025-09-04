@@ -18,10 +18,6 @@ const DEFAULT_CONFIG = {
   localConfigPath: 'ghostpipe.config.json',
   defaultDiffBaseBranch: 'main',
 }
-// const DEFAULT_GLOBAL_CONFIG_PATH = '~/.config/ghostpipe/config.json'
-// const DEFAULT_SIGNALING_SERVER = 'wss://signaling.ghostpipe.dev'
-// const DEFAULT_LOCAL_CONFIG_PATH = 'ghostpipe.config.json'
-// const DEFAULT_DIFF_BASE_BRANCH = 'main'
 let VERBOSE = false
 
 program
@@ -76,6 +72,12 @@ const validateConfig = config => {
     console.log('No url or config found. See https://github.com/inputlogic/ghostpipe#quick-start for a quickstart guide')
     process.exit(0)
   }
+  config.interfaces.forEach(intf => {
+    if (!intf.file) {
+      console.error(chalk.red(`No file specified for ${intf.name}`))
+      process.exit(1)
+    }
+  })
   return config
 }
 
@@ -121,11 +123,6 @@ const connectInterfaceToYjs = (intf, config) => {
 }
 
 const watchLocalFile = (intf, config) => {
-  if (!intf.file) {
-    console.error(chalk.red(`No file specified for ${intf.name}`))
-    process.exit(1)
-  }
-  
   const watcher = chokidar.watch([intf.file], {
     persistent: true,
     ignoreInitial: false
