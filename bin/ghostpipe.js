@@ -39,11 +39,9 @@ log.error = (...args) => VERBOSE && console.error(chalk.red(...args))
 log.warn = (...args) => VERBOSE && console.warn(chalk.yellow(...args))
 
 const main = async (url, file, {diff}) => {
-  const config = await asyncPipe(
-    buildConfig,
-    validateConfig,
-    connectInterfaces
-  )({url, file, diff})
+  const config = await buildConfig({url, file, diff})
+    .then(validateConfig)
+    .then(connectInterfaces)
   config.interfaces.forEach(
     intf => console.log(chalk.cyan(`${intf.name}: `) + chalk.underline(intf.url))
   )
@@ -90,11 +88,11 @@ const connectInterfaces = config => ({
   interfaces: config.interfaces.map(intf => connectInterface(intf, config))
 })
 
-const connectInterface = (intf, config) =>
-  pipe(
-    intf => connectInterfaceToYjs(intf, config),
-    intf => watchLocalFile(intf, config),
-  )(intf)
+const connectInterface = (intf, config) => {
+  const connectedInterface = connectInterfaceToYjs(intf, config)
+  watchLocalFile(connectedInterface, config)
+  return connectedInterface
+}
 
 const connectInterfaceToYjs = (intf, config) => {
   const pipe = crypto.randomBytes(16).toString('hex')
@@ -145,8 +143,6 @@ const watchLocalFile = (intf, config) => {
       debouncedChange(path, intf, config.diff)
     }
   })
-
-  return intf
 }
 
 const prepareInlineInterface = async ({url, file}) => {
@@ -265,17 +261,6 @@ const getHeadBranch = () => {
   } catch (error) {
     log.error('Error getting branch:', error.message)
   }
-}
-
-const pipe = (...functions) => (value) => 
-  functions.reduce((acc, fn) => fn(acc), value)
-
-const asyncPipe = (...functions) => async (value) => {
-  let result = value
-  for (const fn of functions) {
-    result = await fn(result)
-  }
-  return result
 }
 
 program.parse()
