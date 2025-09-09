@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+const WebSocket = require('ws')
+global.WebSocket = WebSocket
 const crypto = require('crypto')
 const { Command } = require('commander')
 const { Doc: YDoc } = require('yjs')
