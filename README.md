@@ -2,6 +2,10 @@
 
 A CLI tool to connect codebase files to user interfaces.
 
+## Demo
+
+[![Ghostpipe Introduction](https://img.youtube.com/vi/XsxF9AgCq6k/hqdefault.jpg)](https://www.youtube.com/watch?v=XsxF9AgCq6k)
+
 ## Quickstart (Excalidraw demo)
 
 ```bash
