@@ -72,7 +72,7 @@ When diff mode is enabled, the tool will:
 
 ### Configuration
 
-Create a `.ghostpipe.json` file in your project root or `~/.config/ghostpipe.json`:
+Create a `ghostpipe.config.json` file in your project root or `~/.config/ghostpipe.json`:
 
 ```json
 {
