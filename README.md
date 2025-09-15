@@ -1,10 +1,33 @@
 # Ghostpipe
 
-A CLI tool to connect codebase files to user interfaces.
+Connect files in your codebase to user interfaces
 
-## Demo
+- Apps can only see the files you explicitly share with them
+- Your data lives in your codebase and under version control
+- No account or installation needed to use a ghostpipe app
+- Keep using the dev tools (editor, ai agent) you're used to
 
-[![Ghostpipe Introduction](https://img.youtube.com/vi/XsxF9AgCq6k/hqdefault.jpg)](https://www.youtube.com/watch?v=XsxF9AgCq6k)
+## Examples
+
+#### Excalidraw
+
+![Excalidraw Demo](demo/excalidraw.gif)
+
+#### Swagger / OpenAPI
+
+![Swagger Demo](demo/swagger.gif)
+
+#### N8N (Proof of Concept)
+
+![N8N Demo](demo/n8n.gif)
+
+#### Config File Support
+
+![Config Demo](demo/config.gif)
+
+#### Diff Mode
+
+![Diff Mode Demo](demo/diff.gif)
 
 ## Quickstart (Excalidraw demo)
 
@@ -13,14 +36,10 @@ npm install -g ghostpipe
 ```
 
 ```bash
-mkdir ghostpipe-quickstart && cd ghostpipe-quickstart
-```
-
-```bash
 ghostpipe https://excalidraw.ghostpipe.dev
 ```
 
-Open the link and draw something. The drawing will be saved in `excalidraw.ghostpipe.dev.txt`.
+Open the link and draw something.
 
 ## How it works
 
