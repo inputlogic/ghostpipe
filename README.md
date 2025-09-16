@@ -75,6 +75,7 @@ ghostpipe [url] [file]
 ```
 
 Examples:
+
 ```bash
 ghostpipe https://excalidraw.ghostpipe.dev              # Will prompt for file or create one
 ghostpipe https://swagger.ghostpipe.dev api.yml         # Connect api.yml to Swagger interface
@@ -100,6 +101,7 @@ ghostpipe [url] [file] --diff feature-123  # Compare with 'feature-123' branch
 ```
 
 When diff mode is enabled, the tool will:
+
 - Share your current working directory files
 - Also send the base version of each file from the specified git branch
 - Allow interfaces to display diffs between the current version and the base branch version
@@ -151,13 +153,13 @@ Create a `ghostpipe.config.json` file in your project root or `~/.config/ghostpi
 Ghostpipe is mostly a proof of concept at this point.
 If you're interested in contributing here are some ideas:
 
-- Add ghostpipe support to an existing open source tool (like (hoppscotch)[https://github.com/hoppscotch/hoppscotch] or (drawdb)[https://github.com/drawdb-io/drawdb])
+- Add ghostpipe support to an existing open source tool (like [hoppscotch](https://github.com/hoppscotch/hoppscotch) or [drawdb](https://github.com/drawdb-io/drawdb))
 - Add ghostpipe support to your own software
 - Contribute to this project (directory support, tests, etc.)
 
 ## Shout-outs
 
-Shout out to (Yjs)[https://github.com/yjs/yjs] and (Chokidar)[https://github.com/paulmillr/chokidar], two key ingredients to getting this to work.
+Shout out to [Yjs](https://github.com/yjs/yjs) and [Chokidar](https://github.com/paulmillr/chokidar), two key ingredients to getting this to work.
 
 ## License
 
