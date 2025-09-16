@@ -98,17 +98,17 @@ Create a `ghostpipe.config.json` file in your project root or `~/.config/ghostpi
 
 ```json
 {
-  "signalingServer": "wss://your-signaling.com",
+  "signalingServer": "wss://signaling.ghostpipe.dev",
   "interfaces": [
     {
       "name": "OpenAPI",
       "host": "https://swagger.ghostpipe.dev",
-      "files": [".ghostpipe/openapi.yml"]
+      "file": "openapi.yml"
     },
     {
-      "name": "ERD",
-      "host": "https://erd.ghostpipe.dev",
-      "files": [".ghostpipe/erd.yml"]
+      "name": "Excalidraw",
+      "host": "https://excalidraw.ghostpipe.dev",
+      "file": "excalidraw.txt"
     }
   ]
 }
