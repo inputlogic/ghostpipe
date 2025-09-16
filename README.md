@@ -7,6 +7,8 @@ Connect files in your codebase to user interfaces
 - No account or installation needed to use a ghostpipe app
 - Keep using the dev tools (editor, ai agent) you're used to
 
+## Table of Contents
+
 - [Examples](#examples)
 - [Quickstart (Excalidraw)](#quickstart-excalidraw)
 - [How it works](#how-it-works)
