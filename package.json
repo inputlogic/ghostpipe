@@ -3,6 +3,7 @@
   "version": "0.1.3",
   "description": "interfaces for your codebase",
   "main": "index.js",
+  "repository": "https://github.com/inputlogic/ghostpipe",
   "bin": {
     "ghostpipe": "./dist/bin/ghostpipe.js"
   },
