@@ -7,6 +7,29 @@ Connect files in your codebase to user interfaces
 - No account or installation needed to use a ghostpipe app
 - Keep using the dev tools (editor, ai agent) you're used to
 
+## Table of Contents
+
+- [Examples](#examples)
+  - [Excalidraw](#excalidraw)
+  - [Swagger / OpenAPI](#swagger--openapi)
+  - [N8N (Proof of Concept)](#n8n-proof-of-concept)
+  - [Config File Support](#config-file-support)
+  - [Diff Mode](#diff-mode-1)
+- [Quickstart (Excalidraw)](#quickstart-excalidraw)
+- [How it works](#how-it-works)
+- [Installation](#installation)
+- [Usage](#usage)
+  - [Basic Usage](#basic-usage)
+  - [Configuration-based Usage](#configuration-based-usage)
+  - [Diff Mode](#diff-mode)
+  - [Configuration](#configuration)
+  - [Options](#options)
+- [Example Ghostpipe Applications](#example-ghostpipe-applications)
+- [Local development](#local-development)
+- [What Next?](#what-next)
+- [Shout-outs](#shout-outs)
+- [License](#license)
+
 ## Examples
 
 #### Excalidraw
@@ -132,6 +155,19 @@ Create a `ghostpipe.config.json` file in your project root or `~/.config/ghostpi
 - `npm install`
 - `npm link`
 - now you should be able to run `ghostpipe` from any project
+
+## What Next?
+
+Ghostpipe is mostly a proof of concept at this point.
+If you're interested in contributing here are some ideas:
+
+- Add ghostpipe support to an existing open source tool (like (hoppscotch)[https://github.com/hoppscotch/hoppscotch] or (drawdb)[https://github.com/drawdb-io/drawdb])
+- Add ghostpipe support to your own software
+- Contribute to this project (directory support, tests, etc.)
+
+## Shout-outs
+
+Shout out to (Yjs)[https://github.com/yjs/yjs] and (Chokidar)[https://github.com/paulmillr/chokidar], two key ingredients to getting this to work.
 
 ## License
 
