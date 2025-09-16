@@ -11,23 +11,23 @@ Connect files in your codebase to user interfaces
 
 #### Excalidraw
 
-![Excalidraw Demo](https://raw.githubusercontent.com/inputlogic/ghostpipe/demo/excalidraw.gif)
+![Excalidraw Demo](https://raw.githubusercontent.com/inputlogic/ghostpipe/main/demo/excalidraw.gif)
 
 #### Swagger / OpenAPI
 
-![Swagger Demo](https://raw.githubusercontent.com/inputlogic/ghostpipe/demo/swagger.gif)
+![Swagger Demo](https://raw.githubusercontent.com/inputlogic/ghostpipe/main/demo/swagger.gif)
 
 #### N8N (Proof of Concept)
 
-![N8N Demo](https://raw.githubusercontent.com/inputlogic/ghostpipe/demo/n8n.gif)
+![N8N Demo](https://raw.githubusercontent.com/inputlogic/ghostpipe/main/demo/n8n.gif)
 
 #### Config File Support
 
-![Config Demo](https://raw.githubusercontent.com/inputlogic/ghostpipe/demo/config.gif)
+![Config Demo](https://raw.githubusercontent.com/inputlogic/ghostpipe/main/demo/config.gif)
 
 #### Diff Mode
 
-![Diff Mode Demo](https://raw.githubusercontent.com/inputlogic/ghostpipe/demo/diff.gif)
+![Diff Mode Demo](https://raw.githubusercontent.com/inputlogic/ghostpipe/main/demo/diff.gif)
 
 ## Quickstart (Excalidraw)
 
