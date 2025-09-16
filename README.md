@@ -7,24 +7,12 @@ Connect files in your codebase to user interfaces
 - No account or installation needed to use a ghostpipe app
 - Keep using the dev tools (editor, ai agent) you're used to
 
-## Table of Contents
-
 - [Examples](#examples)
-  - [Excalidraw](#excalidraw)
-  - [Swagger / OpenAPI](#swagger--openapi)
-  - [N8N (Proof of Concept)](#n8n-proof-of-concept)
-  - [Config File Support](#config-file-support)
-  - [Diff Mode](#diff-mode-1)
 - [Quickstart (Excalidraw)](#quickstart-excalidraw)
 - [How it works](#how-it-works)
 - [Installation](#installation)
 - [Usage](#usage)
-  - [Basic Usage](#basic-usage)
-  - [Configuration-based Usage](#configuration-based-usage)
-  - [Diff Mode](#diff-mode)
-  - [Configuration](#configuration)
-  - [Options](#options)
-- [Example Ghostpipe Applications](#example-ghostpipe-applications)
+- [Example Applications](#example-ghostpipe-applications)
 - [Local development](#local-development)
 - [What Next?](#what-next)
 - [Shout-outs](#shout-outs)
